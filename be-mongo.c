@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include <mongoc.h>
 #include "hash.h"
 #include "log.h"
@@ -229,8 +229,10 @@ int be_mongo_aclcheck(void *conf, const char *clientid, const char *username, co
 	bson_iter_t iter;
 	int match = 0;
 	const bson_oid_t *topic_lookup_oid = NULL;
-	const char *topic_lookup_utf8 = NULL;
+	bson_oid_t topic_oid;
+	char *topic_lookup_utf8 = NULL;
 	int64_t topic_lookup_int64 = 0;
+	bool has_integer_key = false;
 
 	bson_t query;
 
@@ -246,11 +248,13 @@ int be_mongo_aclcheck(void *conf, const char *clientid, const char *username, co
 		if (bson_iter_init_find(&iter, doc, handle->user_topiclist_fk_prop)) {
 			bson_type_t loc_id_type = bson_iter_type(&iter);
 			if (loc_id_type == BSON_TYPE_OID) {
-				topic_lookup_oid = bson_iter_oid(&iter);
+				topic_oid = *bson_iter_oid(&iter);
+				topic_lookup_oid = &topic_oid;
 			} else if (loc_id_type == BSON_TYPE_INT32 || loc_id_type == BSON_TYPE_INT64) {
 				topic_lookup_int64 = bson_iter_as_int64(&iter);
+				has_integer_key = true;
 			} else if (loc_id_type == BSON_TYPE_UTF8) {
-				topic_lookup_utf8 = bson_iter_utf8(&iter, NULL);
+				topic_lookup_utf8 = strdup(bson_iter_utf8(&iter, NULL));
 			}
 		}
 
@@ -273,11 +277,11 @@ int be_mongo_aclcheck(void *conf, const char *clientid, const char *username, co
 	mongoc_cursor_destroy (cursor);
 	mongoc_collection_destroy(collection);
 
-	if (!match && (topic_lookup_oid != NULL || topic_lookup_int64 != 0 || topic_lookup_utf8 != NULL)) {
+	if (!match && (topic_lookup_oid != NULL || has_integer_key || topic_lookup_utf8 != NULL)) {
 		bson_init(&query);
 		if (topic_lookup_oid != NULL) {
 			bson_append_oid(&query, handle->topiclist_key_prop, -1, topic_lookup_oid);
-		} else if (topic_lookup_int64 != 0) {
+		} else if (has_integer_key) {
 			bson_append_int64(&query, handle->topiclist_key_prop, -1, topic_lookup_int64);
 		} else if (topic_lookup_utf8 != NULL) {
 			bson_append_utf8(&query, handle->topiclist_key_prop, -1, topic_lookup_utf8, -1);
@@ -310,6 +314,7 @@ int be_mongo_aclcheck(void *conf, const char *clientid, const char *username, co
 		mongoc_collection_destroy(collection);
 	}
 
+	free(topic_lookup_utf8);
 	return (match) ? BACKEND_ALLOW : BACKEND_DEFER;
 }
 
@@ -360,12 +365,9 @@ bool be_mongo_check_acl_topics_map(const bson_iter_t *topics, const char *req_to
 			if (topic_matches) {
 				bson_type_t val_type = bson_iter_type(&iter);
 				if (val_type == BSON_TYPE_UTF8) {
-					// NOTE: can req_access be any other value than 1 or 2?
-					// in that case this may not be correct:
-					// e.g. req_access == 3 (rw) -> granted = (3 & 1 > 0) == true
 					const char *permission = bson_iter_utf8(&iter, NULL);
 					if (strcmp(permission, "r") == 0) {
-						granted = (req_access & 1) > 0;
+						granted = (req_access & (MOSQ_ACL_READ | MOSQ_ACL_SUBSCRIBE)) > 0;
 					} else if (strcmp(permission, "w") == 0) {
 						granted = (req_access & 2) > 0;
 					} else if (strcmp(permission, "rw") == 0) {

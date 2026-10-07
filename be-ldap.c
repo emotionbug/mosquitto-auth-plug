@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include "backends.h"
 #include "be-ldap.h"
 #include "log.h"

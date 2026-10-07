@@ -17,9 +17,11 @@ int get_sys_envs(char *envs, const char *delim_env, const char *delim_key, char 
 
 	int cnt = 0;
 
-	while (params_key[cnt] != NULL && cnt < params_cnt) {
+	while (cnt < params_cnt) {
 		tk = strtok(params_key[cnt], delim_key);
 		env_name[cnt] = strtok(NULL, delim_key);
+		if (tk == NULL || env_name[cnt] == NULL)
+			return -1;
 		params_key[cnt] = tk;
 		env_value[cnt] = getenv(env_name[cnt]) == NULL ? "NULL" : getenv(env_name[cnt]);
 		cnt++;

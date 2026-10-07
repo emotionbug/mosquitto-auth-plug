@@ -155,8 +155,9 @@ int be_memcached_getuser(void *handle, const char *username, const char *passwor
 		return (BACKEND_DEFER);
 	}
 	if (rc == MEMCACHED_SUCCESS) {
-		*phash = strdup(value);
+		*phash = strndup(value, value_length);
 	}
+	free(value);
 	return (BACKEND_DEFER);
 }
 
@@ -183,12 +184,14 @@ int be_memcached_aclcheck(void *handle, const char *clientid, const char *userna
 	char *query = malloc(strlen(conf->aclquery) + strlen(username) + strlen(topic) + 128);
 	sprintf(query, "%s-%s", username, topic);
 	value = memcached_get(conf->memcached, query, strlen(query), &value_length, &flags, &rc);
+	free(query);
+	if (rc == MEMCACHED_NOTFOUND)
+		return BACKEND_DEFER;
 
 	if (value == NULL || rc != MEMCACHED_SUCCESS) {
 		be_memcached_reconnect(conf);
 		return BACKEND_ERROR;
 	}
-	free(query);
 
 	int answer = 0;
 	if (rc == MEMCACHED_SUCCESS) {

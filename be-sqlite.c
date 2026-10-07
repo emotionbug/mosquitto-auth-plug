@@ -37,7 +37,7 @@
 #include "be-sqlite.h"
 #include "hash.h"
 #include "log.h"
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 
 static bool prepareStatement(struct sqlite_backend *conf)
 {

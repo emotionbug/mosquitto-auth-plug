@@ -110,8 +110,9 @@ void acl_cache(const char *clientid, const char *username, const char *topic, in
 
 	now = time(NULL);
 
-	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 20);
-	sprintf(data, "%s:%s:%s:%d", clientid, username, topic, access);
+	/* Length prefixes prevent colons in identities from merging distinct keys. */
+	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 96);
+	sprintf(data, "%zu:%s%zu:%s%zu:%s:%d", strlen(clientid), clientid, strlen(username), username, strlen(topic), topic, access);
 	hexify(data, hex);
 	free(data);
 
@@ -163,8 +164,8 @@ int acl_cache_q(const char *clientid, const char *username, const char *topic, i
 		return (MOSQ_ERR_UNKNOWN);
 	}
 
-	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 20);
-	sprintf(data, "%s:%s:%s:%d", clientid, username, topic, access);
+	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 96);
+	sprintf(data, "%zu:%s%zu:%s%zu:%s:%d", strlen(clientid), clientid, strlen(username), username, strlen(topic), topic, access);
 	hexify(data, hex);
 	free(data);
 
@@ -213,8 +214,8 @@ void auth_cache(const char *username, const char *password, int granted, void *u
 
 	now = time(NULL);
 
-	data = malloc(strlen(username) + strlen(password) + 2);
-	sprintf(data, "%s:%s", username, password);
+	data = malloc(strlen(username) + strlen(password) + 64);
+	sprintf(data, "%zu:%s%zu:%s", strlen(username), username, strlen(password), password);
 	hexify(data, hex);
 	free(data);
 
@@ -268,8 +269,8 @@ int auth_cache_q(const char *username, const char *password, void *userdata)
 		return (MOSQ_ERR_UNKNOWN);
 	}
 
-	data = malloc(strlen(username) + strlen(password) + 2);
-	sprintf(data, "%s:%s", username, password);
+	data = malloc(strlen(username) + strlen(password) + 64);
+	sprintf(data, "%zu:%s%zu:%s", strlen(username), username, strlen(password), password);
 	hexify(data, hex);
 	free(data);
 

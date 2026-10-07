@@ -1,4 +1,4 @@
-name: HTTP plugin compatibility
+name: Plugin backend compatibility
 
 on:
   push:
@@ -18,6 +18,32 @@ jobs:
   linux-http:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: local-db-password
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_DATABASE: mqtt
+        ports: ['23306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -plocal-db-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: local-db-password
+          POSTGRES_DB: mqtt
+        ports: ['25432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      mongo:
+        image: mongo:7.0
+        ports: ['27027:27017']
+        options: >-
+          --health-cmd="mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval=5s --health-timeout=5s --health-retries=30
     defaults:
       run:
         shell: bash
@@ -29,12 +55,17 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang cmake perl python3 libcjson-dev curl ca-certificates
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential clang cmake perl python3 libcjson-dev curl ca-certificates pkg-config \
+            libsqlite3-dev libhiredis-dev libmariadb-dev libpq-dev libldap2-dev \
+            libmongoc-dev libbson-dev libmemcached-dev redis-server memcached slapd ldap-utils \
+            python3-pymongo python3-psycopg2 python3-pymysql python3-redis
       - name: Check script syntax
         run: |
           bash -n build-http.sh
           bash -n .ci/build-dependencies.sh
-          python3 -m py_compile tests/test_http_plugin.py
+          bash -n .ci/build-backends.sh
+          python3 -m py_compile tests/test_http_plugin.py tests/test_backends.py tests/test_hashes.py
       - name: Build pinned TLS and broker dependencies
         run: bash .ci/build-dependencies.sh "$GITHUB_WORKSPACE/build/deps"
       - name: Build and test HTTP plugin with GCC and Clang
@@ -53,6 +84,16 @@ jobs:
               --curl-prefix "$GITHUB_WORKSPACE/build/deps/curl" \
               --artifacts-dir "$output/tests" 2>&1 | tee "$output/tests.log"
           done
+      - name: Build and test all upstream backends with GCC and Clang
+        run: |
+          for compiler in gcc clang; do
+            output="$GITHUB_WORKSPACE/build/backends-$compiler"
+            mkdir -p "$output"
+            CC="$compiler" bash .ci/build-backends.sh "$GITHUB_WORKSPACE/build/deps" "$output" \
+              2>&1 | tee "$output/build.log"
+            python3 tests/test_backends.py --deps "$GITHUB_WORKSPACE/build/deps" \
+              --build "$output" --artifacts-dir "$output/tests" 2>&1 | tee "$output/tests.log"
+          done
       - name: Upload build and test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -70,3 +111,7 @@ jobs:
             build/clang/*.sha256
             build/clang/*.log
             build/clang/tests/
+            build/backends-*/*.log
+            build/backends-*/*.txt
+            build/backends-*/tests/*.json
+            build/backends-*/tests/*.log

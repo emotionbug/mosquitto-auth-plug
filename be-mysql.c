@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include "be-mysql.h"
 #include "log.h"
 #include "hash.h"
@@ -138,8 +138,8 @@ void *be_mysql_init()
 	if (!mysql_real_connect(conf->mysql, host, user, pass, dbname, port, NULL, 0)) {
 		_log(LOG_NOTICE, "%s", mysql_error(conf->mysql));
 		if (!conf->auto_connect && !reconnect) {
-			free(conf);
 			mysql_close(conf->mysql);
+			free(conf);
 			return (NULL);
 		}
 	}
@@ -189,12 +189,11 @@ static bool auto_connect(struct mysql_backend *conf)
 int be_mysql_getuser(void *handle, const char *username, const char *password, char **phash, const char *clientid)
 {
 	struct mysql_backend *conf = (struct mysql_backend *)handle;
-	char *query = NULL, *u = NULL, *value = NULL, *v;
-	long nrows, ulen;
+	char *query = NULL, *u = NULL, *c = NULL, *value = NULL, *v;
+	long nrows, ulen, clen;
 	MYSQL_RES *res = NULL;
 	MYSQL_ROW rowdata;
 
-	// fprintf(stderr, "------>%s<-----\n", clientid);
 	if (!conf || !conf->userquery || !username || !*username)
 		return BACKEND_DEFER;
 
@@ -207,12 +206,18 @@ int be_mysql_getuser(void *handle, const char *username, const char *password, c
 	if ((u = escape(conf, username, &ulen)) == NULL)
 		return BACKEND_ERROR;
 
-	if ((query = malloc(strlen(conf->userquery) + ulen + 128)) == NULL) {
+	if ((c = escape(conf, clientid ? clientid : "", &clen)) == NULL) {
 		free(u);
 		return BACKEND_ERROR;
 	}
-	sprintf(query, conf->userquery, u, clientid);
+	if ((query = malloc(strlen(conf->userquery) + ulen + clen + 128)) == NULL) {
+		free(u);
+		free(c);
+		return BACKEND_ERROR;
+	}
+	sprintf(query, conf->userquery, u, c);
 	free(u);
+	free(c);
 
 	if (mysql_query(conf->mysql, query)) {
 		fprintf(stderr, "%s\n", mysql_error(conf->mysql));

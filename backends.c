@@ -55,8 +55,8 @@ void t_expand(const char *clientid, const char *username, const char *in, char *
 			u_specials++;
 	}
 	len = strlen(in) + 1;
-	len += strlen(clientid) * c_specials;
-	len += strlen(username) * u_specials;
+	len += strlen(ct) * c_specials;
+	len += strlen(ut) * u_specials;
 
 	if ((work = malloc(len)) == NULL) {
 		*res = NULL;

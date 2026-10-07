@@ -72,10 +72,17 @@ static int get_string_envs(CURL * curl, const char *required_env, char *querystr
 		//_log(LOG_DEBUG, "escaped_key=%s", escaped_key);
 		//_log(LOG_DEBUG, "escaped_val=%s", escaped_envvalue);
 
-		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 1);
+		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 3);
 		if (data == NULL) {
 			_fatal("ENOMEM");
 			return (-1);
+		}
+		if (strlen(querystring) + strlen(escaped_key) + strlen(escaped_val) + 3 > MAXPARAMSLEN) {
+			free(data);
+			curl_free(escaped_key);
+			curl_free(escaped_val);
+			free(env_string);
+			return -1;
 		}
 		sprintf(data, "%s=%s&", escaped_key, escaped_val);
 		if (i == 0) {
@@ -83,14 +90,11 @@ static int get_string_envs(CURL * curl, const char *required_env, char *querystr
 		} else {
 			strcat(querystring, data);
 		}
+		free(data);
+		curl_free(escaped_key);
+		curl_free(escaped_val);
 	}
 
-	if (data)
-		free(data);
-	if (escaped_key)
-		free(escaped_key);
-	if (escaped_val)
-		free(escaped_val);
 	free(env_string);
 	return (num);
 }
@@ -101,7 +105,7 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	CURL *curl;
 	struct curl_slist *headerlist = NULL;
 	int re;
-	int respCode = 0;
+	long respCode = 0;
 	int ok = BACKEND_DEFER;
 	char url[BUFSIZ];
 	char *data;
@@ -153,6 +157,12 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		env_num = get_string_envs(curl, conf->aclcheck_envs, string_envs);
 	}
 	if (env_num == -1) {
+		free(string_envs);
+		curl_free(escaped_token);
+		curl_free(escaped_topic);
+		curl_free(escaped_clientid);
+		curl_slist_free_all(headerlist);
+		curl_easy_cleanup(curl);
 		return BACKEND_ERROR;
 	}
 	//----over-- --
@@ -166,10 +176,9 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		string_envs,
 		escaped_topic,
 		string_acc,
-		clientid);
+		escaped_clientid);
 
 	_log(LOG_DEBUG, "url=%s", url);
-	_log(LOG_DEBUG, "data=%s", data);
 	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 
 	char *token_header = (char *)malloc(strlen(escaped_token) + strlen("Authorization: Bearer ") + 1);
@@ -184,7 +193,7 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	curl_easy_setopt(curl, CURLOPT_POST, 1L);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerlist);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
 	re = curl_easy_perform(curl);
 	if (re == CURLE_OK) {
@@ -205,10 +214,10 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	curl_slist_free_all(headerlist);
 	free(data);
 	free(string_envs);
-	free(escaped_token);
+	curl_free(escaped_token);
 	free(token_header);
-	free(escaped_topic);
-	free(escaped_clientid);
+	curl_free(escaped_topic);
+	curl_free(escaped_clientid);
 	return (ok);
 }
 

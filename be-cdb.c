@@ -35,7 +35,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cdb.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include "backends.h"
 #include "be-cdb.h"
 #include "log.h"

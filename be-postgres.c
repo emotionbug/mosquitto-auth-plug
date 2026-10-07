@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include "be-postgres.h"
 #include "log.h"
 #include "hash.h"

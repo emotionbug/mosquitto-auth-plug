@@ -10,13 +10,13 @@ Forked from [jpmens/mosquitto-auth-plug](https://github.com/jpmens/mosquitto-aut
 | OpenSSL | 3.5.9 |
 | curl / libcurl | 8.22.0 |
 | Platform | Linux x86-64 |
-| Authentication backend | HTTP |
+| Authentication backends | [Tested backend matrix](BACKEND_TESTS.md) |
 
-Support is limited to the HTTP backend with the versions above. Other backends and older versions have not been verified.
+Compatibility is tested with the versions above. See the backend matrix for tested features and limitations; older Mosquitto versions have not been verified.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for build, configuration, and test instructions.
 
-[GitHub Actions](https://github.com/emotionbug/mosquitto-auth-plug/actions/workflows/http-plugin.yml) builds with GCC and Clang and runs HTTP authentication and ACL regression tests against a real broker.
+[GitHub Actions](https://github.com/emotionbug/mosquitto-auth-plug/actions/workflows/http-plugin.yml) builds with GCC and Clang and runs authentication and ACL regression tests against a real broker and backend services.
 
 ## License
 

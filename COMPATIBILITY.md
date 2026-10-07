@@ -1,6 +1,6 @@
 # HTTP backend compatibility
 
-This branch is based on archived upstream `jpmens/mosquitto-auth-plug` commit `34c1ab00ce22f0e32faf3a2563019fb97e60e687`. The supported combination is the HTTP backend on Linux x86-64 with Mosquitto 2.1.2, OpenSSL 3.5.9, and curl 8.22.0. Other backends and older Mosquitto versions are outside the tested scope. The BSD license and third-party notices remain in [LICENSE.txt](LICENSE.txt).
+This branch is based on archived upstream `jpmens/mosquitto-auth-plug` commit `34c1ab00ce22f0e32faf3a2563019fb97e60e687`. The tested platform is Linux x86-64 with Mosquitto 2.1.2, OpenSSL 3.5.9, and curl 8.22.0. This document describes the HTTP-only deployment build. [BACKEND_TESTS.md](BACKEND_TESTS.md) covers regression tests for every backend listed in the original README. Older Mosquitto versions are outside the tested scope. The BSD license and third-party notices remain in [LICENSE.txt](LICENSE.txt).
 
 ## Changes
 
@@ -48,7 +48,7 @@ plugin_opt_log_quiet true
 
 Set the URLs for your API. Requests use POST with `application/x-www-form-urlencoded`. Authentication sends username/password; ACL checks send username/topic/acc/clientid. As in upstream, the client ID is empty for user checks and the password is empty for superuser checks. If a superuser API requires a password and returns 403, the plugin continues with the ACL API. Subscribe access is represented by value 4. Existing pattern-ACL protections reject usernames or client IDs containing `+`, `#`, or `/`.
 
-The HTTP-only build does not use the files backend's `acl_file` option. This example disables caches and additional retries so permission changes and API failures take effect immediately, at the cost of increased API traffic. Each HTTP request has a 10-second timeout and runs synchronously; load-test the expected connection and message volume. Environment parameter injection (`http_*_params`) is outside the tested scope.
+The HTTP-only build does not use the files backend's `acl_file` option. This example disables caches and additional retries so permission changes and API failures take effect immediately, at the cost of increased API traffic. Each HTTP request has a 10-second timeout and runs synchronously; load-test the expected connection and message volume. The backend suite tests Basic authentication and environment parameter injection (`http_*_params`), including rejection of malformed mappings and encoded parameters exceeding the 1024-byte buffer.
 
 ## Tests
 
@@ -79,9 +79,11 @@ API errors can result in a disconnect instead of a refusal CONNACK; the suite al
 
 ## CI
 
-[HTTP plugin compatibility](.github/workflows/http-plugin.yml) runs on pushes to `openssl3-http` and `master`, pull requests targeting those branches, and manual dispatch. GitHub displays the manual dispatch menu only when the workflow exists on the default branch; pushes to the working branch can still trigger it.
+[Plugin backend compatibility](.github/workflows/http-plugin.yml) runs on pushes to `openssl3-http` and `master`, pull requests targeting those branches, and manual dispatch. GitHub displays the manual dispatch menu only when the workflow exists on the default branch; pushes to the working branch can still trigger it.
 
 On Ubuntu 24.04, CI builds pinned SHA-256 source archives for OpenSSL 3.5.9, curl 8.22.0, and Mosquitto 2.1.2. It then builds and tests the plugin separately with GCC and Clang. Selected OpenSSL EVP, TLS, X.509, and verification tests also run. cJSON comes from the runner's operating-system development package.
+
+The same job builds the remaining backends and a separate TLS-PSK variant, starts disposable MySQL 8.4, PostgreSQL 16 and MongoDB 7.0 services, and runs the [backend suite](BACKEND_TESTS.md). Redis, LDAP and Memcached fixtures start locally on temporary ports. Both compiler builds must pass the HTTP and backend suites.
 
 Build logs, dependency information, and test results are retained for 14 days in the `http-plugin-evidence` artifact, including failure logs. CI does not deploy binaries. The workflow token has only `contents: read` permissions and does not require production secrets.
 
@@ -98,7 +100,7 @@ python3 tests/test_http_plugin.py \
   --artifacts-dir "$PWD/build/gcc/tests"
 ```
 
-Passing tests does not establish the absence of all vulnerabilities, compatibility with other backends, or equivalence to a deployment-specific authentication policy. Upstream is archived, so dependency updates and regression testing are maintained in this fork.
+Passing tests does not establish the absence of all vulnerabilities, compatibility with untested backend configurations, or equivalence to a deployment-specific authentication policy. Upstream is archived, so dependency updates and regression testing are maintained in this fork.
 
 ## Decision log
 

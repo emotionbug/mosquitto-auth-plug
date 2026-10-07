@@ -35,9 +35,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
-#include <mosquitto.h>
-#include <mosquitto_plugin.h>
-#include <mosquitto_broker.h>
+#include <mosquitto/libmosquitto.h>
+#include <mosquitto/broker_plugin.h>
+#include <mosquitto/broker.h>
 #include "log.h"
 #include "hash.h"
 #include "backends.h"
@@ -357,43 +357,19 @@ static int do_aclcheck(dllist * acl_list,
 		           const char *topic,
 		           int access)
 {
-	char buf[512];
+	char *expanded;
 	bool ret;
 	acl_entry *acl;
-	const char *t;
-	const char *si;
-	char *di;
+	if (access == MOSQ_ACL_SUBSCRIBE)
+		access = MOSQ_ACL_READ;
 
 	dllist_for_each_element(acl_list, acl, entry) {
-		for (si = acl->topic, di = buf; *si != '\0';) {
-			switch (*si) {
-			case '%':
-				++si;
-				switch (*si) {
-				case 'c':
-					++si;
-					for (t = clientid; *t != '\0'; ++di, ++t)
-						*di = *t;
-					break;
-				case 'u':
-					++si;
-					for (t = username; *t != '\0'; ++di, ++t)
-						*di = *t;
-					break;
-				default:
-					*di++ = *si;
-					break;
-				}
-				break;
-			default:
-				*di++ = *si++;
-				break;
-			}
-		}
-		*di = '\0';
-		if (mosquitto_topic_matches_sub(buf, topic, &ret) != MOSQ_ERR_SUCCESS) {
-			LOG(MOSQ_LOG_ERR, "invalid topic '%s'", buf);
-		} else if (ret && (access & acl->access) != 0) {
+		t_expand(clientid, username, acl->topic, &expanded);
+		if (!expanded)
+			return BACKEND_ERROR;
+		int rc = mosquitto_topic_matches_sub(expanded, topic, &ret);
+		free(expanded);
+		if (rc == MOSQ_ERR_SUCCESS && ret && (access & acl->access) != 0) {
 			return BACKEND_ALLOW;
 		}
 	}

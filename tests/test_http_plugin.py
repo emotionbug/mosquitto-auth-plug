@@ -4,6 +4,8 @@ import argparse
 import http.server
 import json
 import pathlib
+import os
+import pwd
 import socket
 import shutil
 import struct
@@ -26,10 +28,14 @@ def mqtt_string(value):
 
 
 class MQTT:
-    def __init__(self, port, username=None, password=None, clientid="test", keepalive=60):
+    def __init__(self, port, username=None, password=None, clientid="test", keepalive=60, will=None):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=20)
         flags = 2 | (128 if username is not None else 0) | (64 if password is not None else 0)
+        if will is not None:
+            flags |= 4
         data = mqtt_string("MQTT") + bytes([4, flags]) + struct.pack("!H", keepalive) + mqtt_string(clientid)
+        if will is not None:
+            data += mqtt_string(will[0]) + mqtt_string(will[1])
         if username is not None:
             data += mqtt_string(username)
         if password is not None:
@@ -142,7 +148,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mqtt-http-plugin-") as directory:
         folder = pathlib.Path(directory)
         conf = folder / "test.conf"
-        conf.write_text(f"""allow_anonymous false
+        conf.write_text(f"""user {pwd.getpwuid(os.getuid()).pw_name}
+allow_anonymous false
 listener {port} 127.0.0.1
 global_plugin {args.plugin.resolve()}
 plugin_opt_backends http

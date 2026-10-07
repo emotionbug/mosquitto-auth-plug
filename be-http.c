@@ -70,6 +70,13 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 			_fatal("ENOMEM");
 			return (-1);
 		}
+		if (strlen(querystring) + strlen(escaped_key) + strlen(escaped_val) + 3 > MAXPARAMSLEN) {
+			free(data);
+			curl_free(escaped_key);
+			curl_free(escaped_val);
+			free(env_string);
+			return -1;
+		}
 		sprintf(data, "%s=%s&", escaped_key, escaped_val);
 		if ( i == 0 ) {
 			sprintf(querystring, "%s", data);
@@ -157,6 +164,14 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		env_num = get_string_envs(curl, conf->aclcheck_envs, string_envs);
 	}
 	if( env_num == -1 ){
+		free(string_envs);
+		free(url);
+		curl_free(escaped_username);
+		curl_free(escaped_password);
+		curl_free(escaped_topic);
+		curl_free(escaped_clientid);
+		curl_slist_free_all(headerlist);
+		curl_easy_cleanup(curl);
 		return BACKEND_ERROR;
 	}
 	//---- over ----

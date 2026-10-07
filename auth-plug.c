@@ -164,7 +164,7 @@ int mosquitto_auth_plugin_init(void **userdata, struct mosquitto_auth_opt *auth_
 			ud->auth_cacheseconds = atol(o->value);
 		if (!strcmp(o->key, "acl_cachejitter"))
 			ud->acl_cachejitter = atol(o->value);
-		if (!strcmp(o->key, "auth_cacheijitter"))
+		if (!strcmp(o->key, "auth_cachejitter") || !strcmp(o->key, "auth_cacheijitter"))
 			ud->auth_cachejitter = atol(o->value);
 		if (!strcmp(o->key, "log_quiet")) {
 			if(!strcmp(o->value, "false") || !strcmp(o->value, "0")){
@@ -469,7 +469,8 @@ int mosquitto_auth_plugin_cleanup(void *userdata, struct mosquitto_auth_opt *aut
 		struct backend_p **bep;
 
 		for (bep = ud->be_list; bep && *bep; bep++) {
-			(*bep)->kill((*bep)->conf);
+			if ((*bep)->kill)
+				(*bep)->kill((*bep)->conf);
 			free((*bep)->name);
 			free(*bep);
 		}
@@ -732,7 +733,7 @@ int mosquitto_auth_psk_key_get(void *userdata, const char *hint, const char *ide
 	for (bep = ud->be_list; bep && *bep; bep++) {
 		struct backend_p *b = *bep;
 		if (!strcmp(database, b->name)) {
-			rc = b->getuser(b->conf, username, NULL, &psk_key);
+			rc = b->getuser(b->conf, username, NULL, &psk_key, NULL);
 			break;
 		}
 
