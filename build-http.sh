@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "Usage: $0 MOSQUITTO_PREFIX OPENSSL_PREFIX CURL_PREFIX OUTPUT_DIR" >&2
+if [[ $# -ne 5 ]]; then
+  echo "Usage: $0 MOSQUITTO_PREFIX OPENSSL_PREFIX CURL_PREFIX CJSON_PREFIX OUTPUT_DIR" >&2
   exit 2
 fi
 mosquitto_prefix=$(realpath "$1")
 openssl_prefix=$(realpath "$2")
 curl_prefix=$(realpath "$3")
-output_dir=$(realpath -m "$4")
+cjson_prefix=$(realpath "$4")
+output_dir=$(realpath -m "$5")
 source_dir=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$output_dir"
 cd "$source_dir"
@@ -16,9 +17,10 @@ cd "$source_dir"
 # Build only the HTTP backend without the legacy Makefile defaults.
 "${CC:-cc}" -std=gnu99 -fPIC -shared -O2 -Wall -DBE_HTTP \
   -I"$mosquitto_prefix/include" -I"$openssl_prefix/include" -I"$curl_prefix/include" \
+  -I"$cjson_prefix/include" \
   auth-plug.c base64.c pbkdf2-check.c log.c envs.c hash.c cache.c be-http.c \
-  -L"$mosquitto_prefix/lib" -L"$openssl_prefix/lib" -L"$curl_prefix/lib" \
-  -Wl,-rpath,"$mosquitto_prefix/lib:$openssl_prefix/lib:$curl_prefix/lib" \
+  -L"$mosquitto_prefix/lib" -L"$openssl_prefix/lib" -L"$curl_prefix/lib" -L"$cjson_prefix/lib" \
+  -Wl,-rpath,"$mosquitto_prefix/lib:$openssl_prefix/lib:$curl_prefix/lib:$cjson_prefix/lib" \
   -lmosquitto -lcrypto -lcurl -o "$output_dir/auth-plug.so"
 
 cp LICENSE.txt "$output_dir/LICENSE.mosquitto-auth-plug.txt"

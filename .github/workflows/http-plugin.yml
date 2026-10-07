@@ -80,7 +80,8 @@ jobs:
             CC="$compiler" bash build-http.sh \
               "$GITHUB_WORKSPACE/build/deps/mosquitto" \
               "$GITHUB_WORKSPACE/build/deps/openssl" \
-              "$GITHUB_WORKSPACE/build/deps/curl" "$output" 2>&1 | tee "$output/build.log"
+              "$GITHUB_WORKSPACE/build/deps/curl" \
+              "$GITHUB_WORKSPACE/build/deps/cjson" "$output" 2>&1 | tee "$output/build.log"
             python3 tests/test_http_plugin.py \
               --broker "$GITHUB_WORKSPACE/build/deps/mosquitto/sbin/mosquitto" \
               --plugin "$output/auth-plug.so" \

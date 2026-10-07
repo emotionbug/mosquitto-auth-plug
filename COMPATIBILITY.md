@@ -18,7 +18,7 @@ This branch is based on archived upstream `jpmens/mosquitto-auth-plug` commit `3
 Install a C compiler, Bash, binutils, and the development tools listed below. The reproducible dependency build supplies cJSON rather than using the operating-system package. Each dependency prefix must use `lib` as its library directory.
 
 ```bash
-bash build-http.sh /opt/mosquitto-2.1.2 /opt/openssl-3.5.9 /opt/curl-8.22.0 build/http
+bash build-http.sh /opt/mosquitto-2.1.2 /opt/openssl-3.5.9 /opt/curl-8.22.0 /opt/cjson-1.7.19 build/http
 python3 tests/test_http_plugin.py \
   --broker /opt/mosquitto-2.1.2/sbin/mosquitto \
   --plugin build/http/auth-plug.so \
@@ -93,7 +93,8 @@ To reproduce the dependency build, install C/C++ compilers, Clang, CMake 3.18 or
 
 ```bash
 bash .ci/build-dependencies.sh "$PWD/build/deps"
-CC=gcc bash build-http.sh "$PWD/build/deps/mosquitto" "$PWD/build/deps/openssl" "$PWD/build/deps/curl" "$PWD/build/gcc"
+CC=gcc bash build-http.sh "$PWD/build/deps/mosquitto" "$PWD/build/deps/openssl" \
+  "$PWD/build/deps/curl" "$PWD/build/deps/cjson" "$PWD/build/gcc"
 python3 tests/test_http_plugin.py \
   --broker "$PWD/build/deps/mosquitto/sbin/mosquitto" \
   --plugin "$PWD/build/gcc/auth-plug.so" \

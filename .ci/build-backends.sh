@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.."
 mkdir -p "$out/tinycdb"
 cp -r contrib/tinycdb-0.78/. "$out/tinycdb/"
 make -C "$out/tinycdb" CC="${CC:-cc}" CFLAGS='-O2 -fPIC' libcdb.a cdb
-includes=(-I"$deps/mosquitto/include" -I"$deps/openssl/include" -I"$deps/curl/include" -I"$out/tinycdb")
+includes=(-I"$deps/mosquitto/include" -I"$deps/openssl/include" -I"$deps/curl/include"
+  -I"$deps/cjson/include" -I"$out/tinycdb")
 libs=(-L"$deps/mosquitto/lib" -L"$deps/openssl/lib" -L"$deps/curl/lib"
   -Wl,-rpath,"$deps/mosquitto/lib:$deps/openssl/lib:$deps/curl/lib:$deps/cjson/lib:$deps/mongo/lib" -lmosquitto -lcrypto -lcurl
   -Wl,--no-as-needed -lssl -Wl,--as-needed)
