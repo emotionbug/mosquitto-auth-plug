@@ -501,16 +501,18 @@ access to * by * read
 
         def acl_cache():
             nonlocal http_acl_allowed
+            cache_seconds = 5
             try:
-                with suite.broker({**http_options_config, "acl_cacheseconds": 1, "acl_cachejitter": 0}) as (port, _):
+                with suite.broker({**http_options_config, "acl_cacheseconds": cache_seconds,
+                                   "acl_cachejitter": 0}) as (port, _):
                     suite.delivery(port)
                     http_acl_allowed = False
                     suite.delivery(port)
-                    time.sleep(2.1)
+                    time.sleep(cache_seconds + 1.1)
                     suite.delivery(port, allowed=False)
                     http_acl_allowed = True
                     suite.delivery(port, allowed=False)
-                    time.sleep(2.1)
+                    time.sleep(cache_seconds + 1.1)
                     suite.delivery(port)
             finally:
                 http_acl_allowed = True
