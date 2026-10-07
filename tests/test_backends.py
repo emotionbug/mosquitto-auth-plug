@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import pwd
+import shutil
 import socket
 import sqlite3
 import struct
@@ -367,7 +368,10 @@ rootpw {DB_PASSWORD}
 directory {ldap_db}
 access to * by * read
 """)
-        child = stack.enter_context(process(["slapd", "-f", str(ldap_conf), "-h", f"ldap://127.0.0.1:{ldap_port}", "-d", "0"], root / "ldap.log"))
+        # The distro's system-service AppArmor profile excludes test directories.
+        ldap_executable = root / "slapd-fixture"
+        shutil.copy2(shutil.which("slapd"), ldap_executable)
+        child = stack.enter_context(process([str(ldap_executable), "-f", str(ldap_conf), "-h", f"ldap://127.0.0.1:{ldap_port}", "-d", "1"], root / "ldap.log"))
         wait_port(ldap_port, child)
         ldif = "dn: dc=example,dc=org\nobjectClass: domain\ndc: example\n\n"
         for user in users:

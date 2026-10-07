@@ -71,7 +71,7 @@ python3 tests/test_backends.py --deps "$PWD/build/deps" \
   --build "$PWD/build/backends-gcc" --artifacts-dir "$PWD/build/backends-gcc/tests"
 ```
 
-The runner creates its own temporary Redis, Memcached, and LDAP processes and stops them on exit. Use a fresh artifacts directory for each run; fixtures and broker logs remain there for diagnosis. Repeat with `CC=clang` and a separate output directory. The workflow also runs the HTTP-only build and its dedicated suite described in [COMPATIBILITY.md](COMPATIBILITY.md). Remove the three disposable containers when finished.
+The runner creates its own temporary Redis, Memcached, and LDAP processes and stops them on exit. LDAP runs a private copy of the installed `slapd` executable because the distribution's system-service AppArmor profile only permits its standard configuration/database paths. The fixture keeps its executable, configuration and database in the test directory without modifying the system service or its profile. Use a fresh artifacts directory for each run; fixtures and broker logs remain there for diagnosis. Repeat with `CC=clang` and a separate output directory. The workflow also runs the HTTP-only build and its dedicated suite described in [COMPATIBILITY.md](COMPATIBILITY.md). Remove the three disposable containers when finished.
 
 CI publishes build/linker logs, broker logs, and per-scenario JSON results in the existing `http-plugin-evidence` artifact for 14 days. It does not publish binaries or deploy services.
 
