@@ -12,10 +12,11 @@ cp -r contrib/tinycdb-0.78/. "$out/tinycdb/"
 make -C "$out/tinycdb" CC="${CC:-cc}" CFLAGS='-O2 -fPIC' libcdb.a cdb
 includes=(-I"$deps/mosquitto/include" -I"$deps/openssl/include" -I"$deps/curl/include" -I"$out/tinycdb")
 libs=(-L"$deps/mosquitto/lib" -L"$deps/openssl/lib" -L"$deps/curl/lib"
-  -Wl,-rpath,"$deps/mosquitto/lib:$deps/openssl/lib:$deps/curl/lib" -lmosquitto -lcrypto -lcurl
+  -Wl,-rpath,"$deps/mosquitto/lib:$deps/openssl/lib:$deps/curl/lib:$deps/cjson/lib:$deps/mongo/lib" -lmosquitto -lcrypto -lcurl
   -Wl,--no-as-needed -lssl -Wl,--as-needed)
 common=(auth-plug.c base64.c pbkdf2-check.c log.c envs.c hash.c cache.c backends.c)
 crypto=(-L"$deps/openssl/lib" -Wl,-rpath,"$deps/openssl/lib" -lcrypto)
+export PKG_CONFIG_PATH="$deps/mongo/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 packages=(sqlite3 hiredis libmariadb libpq libmongoc-1.0 libbson-1.0 libmemcached)
 read -r -a package_flags <<< "$(pkg-config --cflags --libs "${packages[@]}")"
 backends=(cdb files http jwt ldap mongo mysql postgres redis sqlite memcached)
@@ -41,6 +42,11 @@ done
 for plugin in "$out"/*.so; do
   ldd "$plugin" > "$plugin.ldd.txt"
   if grep -Eq 'lib(crypto|ssl)\.so\.(10|1[.]|0[.])|not found' "$plugin.ldd.txt"; then
+    cat "$plugin.ldd.txt" >&2
+    exit 1
+  fi
+  if grep -Eq 'lib(cjson|mongoc-1[.]0|bson-1[.]0)\.so[^ ]* => /(usr/)?lib/' "$plugin.ldd.txt"; then
+    echo "A system cJSON or Mongo C Driver library was selected." >&2
     cat "$plugin.ldd.txt" >&2
     exit 1
   fi

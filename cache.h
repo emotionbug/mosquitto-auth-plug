@@ -35,7 +35,7 @@
 # define __CACHE_H
 
 struct cacheentry {
-        char hex[SHA_DIGEST_LENGTH * 2 + 1];    /* key within struct */
+	char hex[SHA256_DIGEST_LENGTH * 2 + 1];    /* key within struct */
         int granted;
         time_t expire_time;
         UT_hash_handle hh;

@@ -10,11 +10,12 @@ This branch is based on archived upstream `jpmens/mosquitto-auth-plug` commit `3
 - Accept only HTTP 200 for authentication. APIs that previously relied on HTTP 204 must update their contract.
 - Use the correct long types for libcurl response codes and timeout arguments.
 - Match curl string allocation/free rules and remove a double free in environment parameter handling.
+- Allocate URL and Host header buffers from their exact lengths and release all per-request allocations on failure.
 - Provide an HTTP-only build with explicit RUNPATHs for OpenSSL 3, libcurl, and libmosquitto.
 
 ## Build
 
-Install a C compiler, Bash, binutils, and development headers/shared libraries for all three dependencies. Install cJSON development headers required by the Mosquitto headers. Each dependency prefix must use `lib` as its library directory.
+Install a C compiler, Bash, binutils, and the development tools listed below. The reproducible dependency build supplies cJSON rather than using the operating-system package. Each dependency prefix must use `lib` as its library directory.
 
 ```bash
 bash build-http.sh /opt/mosquitto-2.1.2 /opt/openssl-3.5.9 /opt/curl-8.22.0 build/http
@@ -22,7 +23,8 @@ python3 tests/test_http_plugin.py \
   --broker /opt/mosquitto-2.1.2/sbin/mosquitto \
   --plugin build/http/auth-plug.so \
   --openssl-prefix /opt/openssl-3.5.9 \
-  --curl-prefix /opt/curl-8.22.0
+  --curl-prefix /opt/curl-8.22.0 \
+  --cjson-prefix /opt/cjson-1.7.19
 ```
 
 Build OpenSSL first, then build curl and Mosquitto against that same OpenSSL installation. Rebuild for the target operating system, architecture, glibc, and installation paths. Do not symlink an old OpenSSL SONAME to a new library.
@@ -81,13 +83,13 @@ API errors can result in a disconnect instead of a refusal CONNACK; the suite al
 
 [Plugin backend compatibility](.github/workflows/http-plugin.yml) runs on pushes to `openssl3-http` and `master`, pull requests targeting those branches, and manual dispatch. GitHub displays the manual dispatch menu only when the workflow exists on the default branch; pushes to the working branch can still trigger it.
 
-On Ubuntu 24.04, CI builds pinned SHA-256 source archives for OpenSSL 3.5.9, curl 8.22.0, and Mosquitto 2.1.2. It then builds and tests the plugin separately with GCC and Clang. Selected OpenSSL EVP, TLS, X.509, and verification tests also run. cJSON comes from the runner's operating-system development package.
+On Ubuntu 24.04, CI builds pinned SHA-256 source archives for OpenSSL 3.5.9, curl 8.22.0, Mosquitto 2.1.2, cJSON 1.7.19, and MongoDB C Driver 1.30.12. cJSON utilities are disabled because Mosquitto does not use them and published 2026 advisories affect those functions. The build rejects fallback to the runner's cJSON, libmongoc, or libbson packages. It then builds and tests the plugin separately with GCC and Clang. Selected OpenSSL EVP, TLS, X.509, and verification tests also run. AddressSanitizer, LeakSanitizer, UndefinedBehaviorSanitizer and cppcheck cover input parsing, cleanup and the complete C source set.
 
 The same job builds the remaining backends and a separate TLS-PSK variant, starts disposable MySQL 8.4, PostgreSQL 16 and MongoDB 7.0 services, and runs the [backend suite](BACKEND_TESTS.md). Redis, LDAP and Memcached fixtures start locally on temporary ports. Both compiler builds must pass the HTTP and backend suites.
 
 Build logs, dependency information, and test results are retained for 14 days in the `http-plugin-evidence` artifact, including failure logs. CI does not deploy binaries. The workflow token has only `contents: read` permissions and does not require production secrets.
 
-To reproduce the dependency build, install C/C++ compilers, Clang, CMake 3.18 or later, Perl, Python 3.8 or later, cJSON development headers, curl, and trusted CA certificates:
+To reproduce the dependency build, install C/C++ compilers, Clang, CMake 3.18 or later, Perl, Python 3.8 or later, curl, pkg-config, and trusted CA certificates:
 
 ```bash
 bash .ci/build-dependencies.sh "$PWD/build/deps"
@@ -97,6 +99,7 @@ python3 tests/test_http_plugin.py \
   --plugin "$PWD/build/gcc/auth-plug.so" \
   --openssl-prefix "$PWD/build/deps/openssl" \
   --curl-prefix "$PWD/build/deps/curl" \
+  --cjson-prefix "$PWD/build/deps/cjson" \
   --artifacts-dir "$PWD/build/gcc/tests"
 ```
 

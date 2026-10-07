@@ -64,14 +64,23 @@ void *be_sqlite_init()
 		return (NULL);
 	}
 	conf = (struct sqlite_backend *)malloc(sizeof(struct sqlite_backend));
+	if (conf == NULL)
+		return NULL;
 	conf->stmt = NULL;
+	conf->sq = NULL;
 
 	if (sqlite3_open_v2(dbpath, &conf->sq, flags, NULL) != SQLITE_OK) {
 		_log(MOSQ_LOG_ERR, "failed to open: %s", dbpath);
+		if (conf->sq != NULL)
+			sqlite3_close(conf->sq);
 		free(conf);
 		return (NULL);
 	}
-	prepareStatement(conf);
+	if (!prepareStatement(conf)) {
+		sqlite3_close(conf->sq);
+		free(conf);
+		return NULL;
+	}
 
 	return (conf);
 }
@@ -140,7 +149,8 @@ int be_sqlite_getuser(void *handle, const char *username, const char *password, 
 	}
 
 out:
-	sqlite3_reset(conf->stmt);
+	if (conf->stmt != NULL)
+		sqlite3_reset(conf->stmt);
 
 	*phash = value;
 	return result;

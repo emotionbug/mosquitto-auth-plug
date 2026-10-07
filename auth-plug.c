@@ -28,6 +28,7 @@
  */
 
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 #include <openssl/evp.h>
@@ -185,13 +186,20 @@ int mosquitto_auth_plugin_init(void **userdata, struct mosquitto_auth_opt *auth_
 	backends = p_stab("backends");
 	if (backends == NULL) {
 		_fatal("No backends configured.");
+		return MOSQ_ERR_UNKNOWN;
 	}
 
 	_p = p = strdup(backends);
+	if (p == NULL)
+		return MOSQ_ERR_UNKNOWN;
 
 	_log(LOG_NOTICE, "** Configured order: %s\n", p);
 
 	ud->be_list = (struct backend_p **)malloc((sizeof (struct backend_p *)) * (NBACKENDS + 1));
+	if (ud->be_list == NULL) {
+		free(_p);
+		return MOSQ_ERR_UNKNOWN;
+	}
 
 	bep = ud->be_list;
 	nord = 0;
@@ -477,6 +485,7 @@ int mosquitto_auth_plugin_cleanup(void *userdata, struct mosquitto_auth_opt *aut
 		free(ud->be_list);
 	}
 
+	p_freeall();
 	free(ud);
 
 	return MOSQ_ERR_SUCCESS;
@@ -750,8 +759,20 @@ int mosquitto_auth_psk_key_get(void *userdata, const char *hint, const char *ide
 			psk_key ? 1 : 0);
 
 		if (psk_key != NULL) {
-			strncpy(key, psk_key, max_key_len);
-			psk_found = TRUE;
+			size_t i, key_len = strlen(psk_key);
+
+			if (key_len > 0 && max_key_len > 0 && key_len < (size_t)max_key_len && key_len % 2 == 0) {
+				psk_found = TRUE;
+				for (i = 0; i < key_len; i++) {
+					if (!isxdigit((unsigned char)psk_key[i])) {
+						psk_found = FALSE;
+						break;
+					}
+				}
+				if (psk_found) {
+					memcpy(key, psk_key, key_len + 1);
+				}
+			}
 		}
 	}
 

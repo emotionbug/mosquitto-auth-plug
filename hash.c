@@ -45,6 +45,20 @@ static struct my_opts {
 void p_add(char *name, char *value)
 {
 	struct my_opts *mo;
+	char *new_value;
+
+	if (name == NULL || value == NULL)
+		return;
+
+	HASH_FIND_STR(globalopts, name, mo);
+	if (mo != NULL) {
+		new_value = strdup(value);
+		if (new_value != NULL) {
+			free(mo->value);
+			mo->value = new_value;
+		}
+		return;
+	}
 
 	mo = (struct my_opts *)malloc(sizeof(struct my_opts));
 	if (mo == NULL) {
@@ -52,6 +66,12 @@ void p_add(char *name, char *value)
 	}
 	mo->name = strdup(name);
 	mo->value = strdup(value);
+	if (mo->name == NULL || mo->value == NULL) {
+		free(mo->name);
+		free(mo->value);
+		free(mo);
+		return;
+	}
 
 	HASH_ADD_KEYPTR(hh, globalopts, mo->name, strlen(mo->name), mo);
 }
@@ -60,7 +80,7 @@ void p_add(char *name, char *value)
  * Recursively free the hash
  */
 
-void p_freeall()
+void p_freeall(void)
 {
 	struct my_opts *mo, *tmp;
 
@@ -70,6 +90,7 @@ void p_freeall()
 		if (mo->name)
 			free(mo->name);
 		HASH_DEL(globalopts, mo);
+		free(mo);
 	}
 }
 
@@ -87,7 +108,7 @@ char *p_stab(const char *key)
 	return ( (mo) ? mo->value : NULL);
 }
 
-void p_dump()
+void p_dump(void)
 {
 	struct my_opts *mo, *tmp;
 

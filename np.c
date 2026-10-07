@@ -28,6 +28,8 @@
  */
 
 #include <stdio.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -46,9 +48,10 @@ int main(int argc, char **argv)
 {
 	int iterations = 901, rc, blen;
 	unsigned char	saltbytes[SALTLEN];
-	char *salt, *b64;
+	char *salt = NULL, *b64 = NULL;
 	unsigned char key[128];
-	char *pw1, *pw2, *password;
+	char *pw1 = NULL, *pw2 = NULL, *password;
+	int pw2_owned = 0;
 	char *progname = argv[0];
 	int c;
 	int prompt;
@@ -57,12 +60,23 @@ int main(int argc, char **argv)
 
 	while ((c = getopt(argc, argv, "i:p:")) != EOF) {
 		switch (c) {
-			case 'i':
-				iterations = atoi(optarg);
+		case 'i':
+			{
+				char *end = NULL;
+				long parsed;
+				errno = 0;
+				parsed = strtol(optarg, &end, 10);
+				if (errno != 0 || *end != '\0' || parsed < 1 || parsed > 10000000L || parsed > INT_MAX)
+					exit(USAGE());
+				iterations = (int)parsed;
+			}
 				break;
 			case 'p':
 				pw1 = strdup(optarg);
-				pw2 = strdup(optarg);	
+				pw2 = strdup(optarg);
+				pw2_owned = 1;
+				if (pw1 == NULL || pw2 == NULL)
+					return 2;
 				prompt = 0;
 				break;
 			default:
@@ -70,20 +84,22 @@ int main(int argc, char **argv)
 		}
 	}
 
-	argc -= optind - 1;
-	argv += optind - 1;
-
-	if (argc != 1) {
+	if (optind != argc) {
 		exit(USAGE());
 	}
 
 	if ( prompt ) {
 		pw1 = strdup(getpass("Enter password: "));
 		pw2 = getpass("Re-enter same password: ");
+		if (pw1 == NULL || pw2 == NULL)
+			return 2;
 	}
 
 	if (strcmp(pw1, pw2) != 0) {
 		fprintf(stderr, "Passwords don't match!\n");
+		free(pw1);
+		if (pw2_owned)
+			free(pw2);
 		return (1);
 	}
 
@@ -92,13 +108,21 @@ int main(int argc, char **argv)
 	rc = RAND_bytes(saltbytes, SALTLEN);
 	if (rc == 0) {
 		fprintf(stderr, "Cannot get random bytes for salt!\n");
+		free(password);
+		if (pw2_owned)
+			free(pw2);
 		return 2;
 	}
 
-	base64_encode(saltbytes, SALTLEN, &salt);
+	if (base64_encode(saltbytes, SALTLEN, &salt) < 0) {
+		free(password);
+		if (pw2_owned)
+			free(pw2);
+		return 2;
+	}
 
 #ifdef RAW_SALT
-	PKCS5_PBKDF2_HMAC(password, strlen(password),
+	rc = PKCS5_PBKDF2_HMAC(password, strlen(password),
 		(unsigned char *)saltbytes, SALTLEN,
 		iterations,
 		EVP_sha256(), KEY_LENGTH, key);
@@ -106,12 +130,19 @@ int main(int argc, char **argv)
 	int saltlen;
 	saltlen = strlen(salt);
 
-	PKCS5_PBKDF2_HMAC(password, strlen(password),
+	rc = PKCS5_PBKDF2_HMAC(password, strlen(password),
 		(unsigned char *)salt, saltlen,
 		iterations,
 		EVP_sha256(), KEY_LENGTH, key);
 #endif
 
+	if (rc != 1) {
+		free(salt);
+		free(password);
+		if (pw2_owned)
+			free(pw2);
+		return 2;
+	}
 
 	blen = base64_encode(key, KEY_LENGTH, &b64);
 	if (blen > 0) {
@@ -125,5 +156,8 @@ int main(int argc, char **argv)
 	}
 
 	free(password);
+	if (pw2_owned)
+		free(pw2);
+	free(salt);
 	return 0;
 }

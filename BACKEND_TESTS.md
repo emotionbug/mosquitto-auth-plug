@@ -2,7 +2,7 @@
 
 The inventory comes from the [original README at upstream commit 34c1ab0](https://github.com/jpmens/mosquitto-auth-plug/blob/34c1ab00ce22f0e32faf3a2563019fb97e60e687/README.md). Every backend in its capability table is exercised against a real Mosquitto 2.1.2 process. Memcached, which is implemented but omitted from that table, is included as well.
 
-CI uses Ubuntu 24.04 x86-64, GCC and Clang, OpenSSL 3.5.9, and curl 8.22.0. It runs 18 HTTP checks and 28 additional backend scenarios for each compiler. A scenario can contain multiple positive and negative assertions. Test credentials, database records, PSKs, listeners, and API fixtures are synthetic. No production services or certificates are used.
+CI uses Ubuntu 24.04 x86-64, GCC and Clang, OpenSSL 3.5.9, curl 8.22.0, cJSON 1.7.19, and MongoDB C Driver 1.30.12. It runs 18 HTTP checks and 31 additional backend scenarios for each compiler, plus sanitizer and static-analysis checks. A scenario can contain multiple positive and negative assertions. Test credentials, database records, PSKs, listeners, and API fixtures are synthetic. No production services or certificates are used.
 
 ## Matrix
 
@@ -10,13 +10,13 @@ CI uses Ubuntu 24.04 x86-64, GCC and Clang, OpenSSL 3.5.9, and curl 8.22.0. It r
 | --- | --- | --- |
 | CDB | Bundled TinyCDB 0.78 | Password lookup; invalid, missing, empty and anonymous credential rejection; intentionally unrestricted ACLs |
 | Files | Password and ACL files | Authentication; default/read/write topic rules; wildcard topics; `%u`/`%c` expansion; long client IDs; static superuser |
-| HTTP | Local form API | Authentication; HTTP status/error/timeout handling; publish, subscribe and read ACLs; revocation; superuser; Basic authentication; request and environment encoding |
+| HTTP | Local form API | Authentication; HTTP status/error/timeout handling; publish, subscribe and read ACLs; revocation; superuser; Basic authentication; request and environment encoding; long Host headers |
 | JWT | Local bearer-token API | Delegated token validation; rejected token; password ignored as documented; superuser; ACL; client ID/environment encoding |
-| LDAP | Ubuntu OpenLDAP/slapd | Search and user bind; invalid/missing credentials; default unrestricted ACL; `ldap_acl_deny=true` |
-| MongoDB | MongoDB 7.0; Ubuntu libmongoc 1.x | Password lookup; superuser; wildcard ACL arrays and read/write maps; string, integer (including zero) and ObjectId topic-list references; `%u`/`%c` expansion |
+| LDAP | Ubuntu OpenLDAP/slapd | Search and user bind; invalid/missing credentials; RFC 4515 escaping; repeated filter placeholders; long usernames; failed-bind cleanup; default unrestricted ACL; `ldap_acl_deny=true` |
+| MongoDB | MongoDB 7.0; MongoDB C Driver 1.30.12 | Password lookup; malformed password/type rejection; superuser; wildcard ACL arrays and read/write maps; mixed-type ACL arrays; string, integer (including zero) and ObjectId topic-list references; `%u`/`%c` expansion |
 | MySQL | MySQL 8.4; Ubuntu MariaDB client library | Password and superuser queries; wildcard ACL query; username/client ID SQL escaping; long client IDs; two-parameter user query; `%u`/`%c` ACL expansion |
 | PostgreSQL | PostgreSQL 16; Ubuntu libpq | Parameterized password/superuser/ACL queries; wildcard ACLs; quoted username rejection |
-| Redis | Ubuntu Redis/hiredis | Password-protected connection; database selection; custom user/ACL queries; exact-topic ACL allow/deny; static superuser |
+| Redis | Ubuntu Redis/hiredis | Password-protected connection; database selection; custom user/ACL queries; argument-boundary preservation for spaces and percent signs; exact-topic ACL allow/deny; static superuser |
 | SQLite | Ubuntu SQLite3 | Bound password query; credential rejection; intentionally unrestricted ACLs; fallback authentication |
 | TLS-PSK | OpenSSL 3 with SQLite key storage | Identity/key lookup; real TLS 1.2 encrypted publish/receive; wrong-key rejection; broker shutdown |
 | Memcached | Ubuntu Memcached/libmemcached | Password lookup; exact-topic ACLs; missing-key denial; static superuser |
@@ -32,6 +32,8 @@ All brokers are checked for liveness and successful shutdown. Process maps must 
 - Positive and negative authentication/ACL caching, password changes, expiration and cache disabling.
 - Credential and ACL cache isolation when identities contain colons.
 - Invalid and oversized environment mappings fail closed without terminating the broker.
+- Strict Base64/PBKDF2 parsing rejects truncated input, unsupported digests, invalid iterations and trailing fields.
+- AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer exercise parsing and option cleanup; cppcheck covers all C translation units; Valgrind runs the 18-check HTTP suite and fails on definite shutdown leaks.
 
 The HTTP suite also checks reconnects, wildcard-identity rejection, read checks after subscribing, and absence of plaintext/encoded passwords in logs.
 
@@ -47,7 +49,7 @@ The test matrix covers these concrete combinations. It does not certify every hi
 
 ## Run locally
 
-Use a disposable Ubuntu 24.04 environment. Install the packages listed in [the workflow](.github/workflows/http-plugin.yml). Build dependencies into a directory containing `mosquitto`, `openssl`, and `curl` prefixes:
+Use a disposable Ubuntu 24.04 environment. Install the packages listed in [the workflow](.github/workflows/http-plugin.yml). Build dependencies into a directory containing `mosquitto`, `openssl`, `curl`, `cjson`, and `mongo` prefixes:
 
 ```bash
 bash .ci/build-dependencies.sh "$PWD/build/deps"
@@ -67,6 +69,7 @@ Wait for the database services to become ready, then run:
 
 ```bash
 CC=gcc bash .ci/build-backends.sh "$PWD/build/deps" "$PWD/build/backends-gcc"
+CC=clang bash .ci/run-security-checks.sh "$PWD/build/deps/openssl" "$PWD/build/security"
 python3 tests/test_backends.py --deps "$PWD/build/deps" \
   --build "$PWD/build/backends-gcc" --artifacts-dir "$PWD/build/backends-gcc/tests"
 ```
@@ -82,6 +85,6 @@ CI publishes build/linker logs, broker logs, and per-scenario JSON results in th
 - Alternatives: HTTP-only tests, mocked backend functions, or real broker/backend integration tests.
 - Decision: compile all implemented password backends together, build TLS-PSK separately, and exercise actual services with both compilers.
 - Rationale: protocol tests expose authentication, ACL, library-loading and shutdown failures that compile checks cannot detect.
-- Fixes: installed Mosquitto headers; PSK callback and cleanup; Files subscribe checks and dynamic pattern expansion; nullable expansion inputs; JWT libcurl types/allocation/encoding; bounded environment parameters; MySQL client ID escaping; owned MongoDB reference values; Memcached missing-key handling; unambiguous cache keys.
+- Fixes: installed Mosquitto headers; PSK callback and validation; Files subscribe checks and dynamic pattern expansion; nullable expansion inputs; JWT/HTTP dynamic buffers and cleanup; bounded environment parameters; LDAP filter escaping and connection cleanup; strict PBKDF2/Base64 parsing; SQL result checks; Redis command argument boundaries; MongoDB type checks; CDB descriptor cleanup; backend and option cleanup; SHA-256 cache keys.
 - Tradeoffs: more CI dependencies and runtime; service versions are tested major/minor lines rather than claims about all releases.
 - Invariants: deny invalid credentials, preserve each documented ACL policy, keep fixtures isolated, preserve licenses, and never depend on legacy OpenSSL SONAMEs.

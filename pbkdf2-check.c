@@ -10,199 +10,154 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of mosquitto nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
+ * 3. Neither the name of mosquitto nor the names of its contributors may be
+ *    used to endorse or promote products derived from this software without
+ *    specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.
  */
 
-#include <stdio.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include "base64.h"
 
-#define SEPARATOR       "$"
-#define TRUE	(1)
-#define FALSE	(0)
+#define SEPARATOR "$"
+#define MAX_HASH_LENGTH 8192
+#define MAX_ITERATIONS 10000000L
+#define MAX_SALT_LENGTH 1024
+#define MAX_DERIVED_KEY_LENGTH 1024
 
-
-/*
- * Split PBKDF2$... string into their components. The caller must free()
- * the strings.
- */
-
-static int detoken(char *pbkstr, char **sha, int *iter, char **salt, char **key)
+static int parse_iterations(const char *value, int *iterations)
 {
-	char *p, *s, *save;
-	int rc = 1;
+	char *end = NULL;
+	long parsed;
+
+	if (value == NULL || *value == '\0')
+		return -1;
+	errno = 0;
+	parsed = strtol(value, &end, 10);
+	if (errno != 0 || *end != '\0' || parsed < 1 || parsed > MAX_ITERATIONS || parsed > INT_MAX)
+		return -1;
+	*iterations = (int)parsed;
+	return 0;
+}
+
+static int detoken(const char *pbkstr, char **sha, int *iter, char **salt, char **key)
+{
+	char *p, *s, *save = NULL;
+	int rc = -1;
+
+	*sha = NULL;
+	*salt = NULL;
+	*key = NULL;
+	if (pbkstr == NULL || strnlen(pbkstr, MAX_HASH_LENGTH + 1) > MAX_HASH_LENGTH)
+		return -1;
 
 	save = s = strdup(pbkstr);
+	if (save == NULL)
+		return -1;
 
 #if defined(SUPPORT_DJANGO_HASHERS)
-{
-	if ((p = strsep(&s, "_")) == NULL)
+	if ((p = strsep(&s, "_")) == NULL || strcmp(p, "pbkdf2") != 0)
 		goto out;
-	if (strcmp(p, "pbkdf2") != 0)
-		goto out;
-}
 #else
-{
-	if ((p = strsep(&s, SEPARATOR)) == NULL)
+	if ((p = strsep(&s, SEPARATOR)) == NULL || strcmp(p, "PBKDF2") != 0)
 		goto out;
-	if (strcmp(p, "PBKDF2") != 0)
-		goto out;
-}
 #endif
 
-	if ((p = strsep(&s, SEPARATOR)) == NULL)
+	if ((p = strsep(&s, SEPARATOR)) == NULL ||
+	    (strcmp(p, "sha1") != 0 && strcmp(p, "sha256") != 0 && strcmp(p, "sha512") != 0))
 		goto out;
 	*sha = strdup(p);
 
-	if ((p = strsep(&s, SEPARATOR)) == NULL)
+	if ((p = strsep(&s, SEPARATOR)) == NULL || parse_iterations(p, iter) != 0)
 		goto out;
-	*iter = atoi(p);
-
-	if ((p = strsep(&s, SEPARATOR)) == NULL)
+	if ((p = strsep(&s, SEPARATOR)) == NULL || strlen(p) > MAX_SALT_LENGTH)
 		goto out;
 	*salt = strdup(p);
-
-	if ((p = strsep(&s, SEPARATOR)) == NULL)
+	if ((p = strsep(&s, SEPARATOR)) == NULL || *p == '\0' || s != NULL)
 		goto out;
 	*key = strdup(p);
 
+	if (*sha == NULL || *salt == NULL || *key == NULL)
+		goto out;
 	rc = 0;
 
-     out:
+out:
+	if (rc != 0) {
+		free(*sha);
+		free(*salt);
+		free(*key);
+		*sha = *salt = *key = NULL;
+	}
 	free(save);
 	return rc;
 }
 
 int pbkdf2_check(char *password, char *hash)
 {
-	char *sha, *salt, *h_pw;
-	int iterations, saltlen, blen;
-	char *b64, *keybuf;
-	unsigned char *out;
-	int match = FALSE;
-	const EVP_MD *evpmd;
-	int keylen, rc;
+	char *sha = NULL, *salt = NULL, *encoded = NULL;
+	unsigned char *expected = NULL, *derived = NULL, *raw_salt = NULL;
+	const unsigned char *salt_data;
+	const EVP_MD *digest = NULL;
+	int iterations = 0, expected_len, salt_len, match = 0;
+	size_t encoded_len;
 
-	if (detoken(hash, &sha, &iterations, &salt, &h_pw) != 0)
-		return match;
+	if (password == NULL || detoken(hash, &sha, &iterations, &salt, &encoded) != 0)
+		goto out;
 
-	/* Determine key length by decoding base64 */
-	if ((keybuf = malloc(strlen(h_pw) + 1)) == NULL) {
-		fprintf(stderr, "Out of memory\n");
-		return FALSE;
-	}
-	keylen = base64_decode(h_pw, keybuf);
-	if (keylen < 1) {
-		free(keybuf);
-		return (FALSE);
-	}
-	free(keybuf);
+	if (strcmp(sha, "sha1") == 0)
+		digest = EVP_sha1();
+	else if (strcmp(sha, "sha256") == 0)
+		digest = EVP_sha256();
+	else if (strcmp(sha, "sha512") == 0)
+		digest = EVP_sha512();
+	if (digest == NULL)
+		goto out;
 
-	if ((out = malloc(keylen)) == NULL) {
-		fprintf(stderr, "Cannot allocate out; out of memory\n");
-		return (FALSE);
-	}
+	encoded_len = strlen(encoded);
+	expected = malloc(encoded_len);
+	if (expected == NULL)
+		goto out;
+	expected_len = base64_decode(encoded, expected, encoded_len);
+	if (expected_len < 1 || expected_len > MAX_DERIVED_KEY_LENGTH)
+		goto out;
 
 #ifdef RAW_SALT
-	char *rawSalt;
-
-	if ((rawSalt = malloc(strlen(salt) + 1)) == NULL) {
-		fprintf(stderr, "Out of memory\n");
-		return FALSE;
-	}
-
-	saltlen = base64_decode(salt, rawSalt);
-	if (saltlen < 1) {
-		return (FALSE);
-	}
-
-	free(salt);
-	salt = rawSalt;
-	rawSalt = NULL;
-#else
-	saltlen = strlen((char *)salt);
-#endif
-
-#ifdef PWDEBUG
-	fprintf(stderr, "sha        =[%s]\n", sha);
-	fprintf(stderr, "iterations =%d\n", iterations);
-	fprintf(stderr, "salt       =[%s]\n", salt);
-	fprintf(stderr, "salt len   =[%d]\n", saltlen);
-	fprintf(stderr, "h_pw       =[%s]\n", h_pw);
-	fprintf(stderr, "kenlen     =[%d]\n", keylen);
-#endif
-
-
-	evpmd = EVP_sha256();
-	if (strcmp(sha, "sha1") == 0) {
-		evpmd = EVP_sha1();
-	} else if (strcmp(sha, "sha512") == 0) {
-		evpmd = EVP_sha512();
-	}
-
-	rc = PKCS5_PBKDF2_HMAC(password, strlen(password),
-		(unsigned char *)salt, saltlen,
-		iterations,
-		evpmd, keylen, out);
-	if (rc != 1) {
+	raw_salt = malloc(strlen(salt));
+	if (raw_salt == NULL)
 		goto out;
-	}
-
-	blen = base64_encode(out, keylen, &b64);
-	if (blen > 0) {
-		int i, diff = 0, hlen = strlen(h_pw);
-#ifdef PWDEBUG
-		fprintf(stderr, "HMAC b64   =[%s]\n", b64);
+	salt_len = base64_decode(salt, raw_salt, strlen(salt));
+	if (salt_len < 1 || salt_len > MAX_SALT_LENGTH)
+		goto out;
+	salt_data = raw_salt;
+#else
+	salt_len = (int)strlen(salt);
+	if (salt_len < 1)
+		goto out;
+	salt_data = (const unsigned char *)salt;
 #endif
 
-		/* "manual" strcmp() to ensure constant time */
-		for (i = 0; (i < blen) && (i < hlen); i++) {
-			diff |= h_pw[i] ^ b64[i];
-		}
+	derived = malloc((size_t)expected_len);
+	if (derived == NULL)
+		goto out;
+	if (PKCS5_PBKDF2_HMAC(password, (int)strlen(password), salt_data, salt_len,
+		iterations, digest, expected_len, derived) != 1)
+		goto out;
 
-		match = diff == 0;
-		if (hlen != blen)
-			match = 0;
+	match = CRYPTO_memcmp(expected, derived, (size_t)expected_len) == 0;
 
-		free(b64);
-	}
-
-  out:
+out:
 	free(sha);
 	free(salt);
-	free(h_pw);
-	free(out);
-
+	free(encoded);
+	free(expected);
+	free(derived);
+	free(raw_salt);
 	return match;
 }
-
-#if TEST
-int main()
-{
-	char password[] = "password";
-	char pbkstr[] = "PBKDF2$sha1$98$XaIs9vQgmLujKHZG4/B3dNTbeP2PyaVKySTirZznBrE=$2DX/HZDTojVbfgAIdozBi6CihjWP1+akYnh/h9uQfIVl6pLoAiwJe1ey2WW2BnT+";
-	int match;
-
-	printf("Checking password [%s] for %s\n", password, pbkstr);
-
-	match = pbkdf2_check(password, pbkstr);
-	printf("match == %d\n", match);
-	return match;
-}
-#endif

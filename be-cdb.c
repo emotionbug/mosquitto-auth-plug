@@ -57,19 +57,28 @@ void *be_cdb_init()
 
 	conf = malloc(sizeof(struct cdb_backend));
 	if (conf == NULL) {
+		close(fd);
 		return (NULL);
 	}
 
 	conf->cdbname	= strdup(cdbname);
 	conf->cdb	= (struct cdb *)malloc(sizeof(struct cdb));
 
-	if (conf->cdb == NULL) {
+	if (conf->cdbname == NULL || conf->cdb == NULL) {
+		close(fd);
+		free(conf->cdb);
 		free(conf->cdbname);
 		free(conf);
 		return (NULL);
 	}
 
-	cdb_init(conf->cdb, fd);
+	if (cdb_init(conf->cdb, fd) != 0) {
+		close(fd);
+		free(conf->cdb);
+		free(conf->cdbname);
+		free(conf);
+		return NULL;
+	}
 
 	return (conf);
 }
@@ -79,7 +88,10 @@ void be_cdb_destroy(void *handle)
 	struct cdb_backend *conf = (struct cdb_backend *)handle;
 
 	if (conf) {
+		int fd = cdb_fileno(conf->cdb);
 		cdb_free(conf->cdb);
+		close(fd);
+		free(conf->cdb);
 		free(conf->cdbname);
 		free(conf);
 	}
@@ -102,55 +114,17 @@ int be_cdb_getuser(void *handle, const char *username, const char *password, cha
 		int vlen = cdb_datalen(conf->cdb);
 
 		if ((v = malloc(vlen + 1)) != NULL) {
-			cdb_read(conf->cdb, v, vlen, vpos);
-			v[vlen] = 0;
+			if (cdb_read(conf->cdb, v, vlen, vpos) == 0)
+				v[vlen] = 0;
+			else {
+				free(v);
+				v = NULL;
+			}
 		}
 	}
 
 	*phash = v;
 	return BACKEND_DEFER;
-}
-
-/*
- * Check access to topic for username. Look values for a key "acl:username"
- * and use mosquitto_topic_matches_sub() to validate the topic.
- */
-
-int be_cdb_access(void *handle, const char *username, char *topic)
-{
-	struct cdb_backend *conf = (struct cdb_backend *)handle;
-	char *k;
-	unsigned klen;
-	int found = 0;
-	struct cdb_find cdbf;
-	bool bf;
-
-	if (!conf || !username || !topic)
-		return (0);
-
-	if ((k = malloc(strlen(username) + strlen("acl:") + 2)) == NULL)
-		return (0);
-	sprintf(k, "acl:%s", username);
-	klen = strlen(k);
-
-	cdb_findinit(&cdbf, conf->cdb, k, klen);
-	while ((cdb_findnext(&cdbf) > 0) && (!found)) {
-		unsigned vpos = cdb_datapos(conf->cdb);
-		unsigned vlen = cdb_datalen(conf->cdb);
-		char *val;
-
-		val = malloc(vlen);
-		cdb_read(conf->cdb, val, vlen, vpos);
-
-		mosquitto_topic_matches_sub(val, topic, &bf);
-		found |= bf;
-
-		free(val);
-	}
-
-	free(k);
-
-	return (found > 0);
 }
 
 int be_cdb_superuser(void *handle, const char *username)

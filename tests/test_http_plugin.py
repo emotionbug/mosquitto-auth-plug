@@ -102,6 +102,7 @@ def main():
     parser.add_argument("--plugin", required=True, type=pathlib.Path)
     parser.add_argument("--openssl-prefix", required=True, type=pathlib.Path)
     parser.add_argument("--curl-prefix", required=True, type=pathlib.Path)
+    parser.add_argument("--cjson-prefix", required=True, type=pathlib.Path)
     parser.add_argument("--artifacts-dir", type=pathlib.Path)
     args = parser.parse_args()
     if args.artifacts_dir:
@@ -296,9 +297,9 @@ plugin_opt_acl_cacheseconds 0
 
                 loaded = pathlib.Path(f"/proc/{broker.pid}/maps").read_text()
                 assert "libcrypto.so.10" not in loaded and "libssl.so.10" not in loaded
-                for prefix, library in ((args.openssl_prefix, "libcrypto.so.3"), (args.openssl_prefix, "libssl.so.3"), (args.curl_prefix, "libcurl.so")):
+                for prefix, library in ((args.openssl_prefix, "libcrypto.so.3"), (args.openssl_prefix, "libssl.so.3"), (args.curl_prefix, "libcurl.so"), (args.cjson_prefix, "libcjson.so.1")):
                     assert any(str(prefix.resolve()) in line and library in line for line in loaded.splitlines()), library
-                checks.append("private_openssl_and_curl_loaded_without_so10")
+                checks.append("private_dependencies_loaded_without_so10")
 
                 assert connect("timeout", password, "timeout").result != 0
                 checks.append("http_timeout_denied")

@@ -78,8 +78,8 @@ void *be_pg_init()
 	sslcert = p_stab("sslcert");
 	sslkey = p_stab("sslkey");
 
-	host = (host) ? host : strdup("");
-	port = (p) ? p : strdup("");
+	host = (host) ? host : "";
+	port = (p) ? p : "";
 
 	userquery = p_stab("userquery");
 
@@ -108,6 +108,12 @@ void *be_pg_init()
 	const uint8_t MAX_KEYS = 7;
 	keywords = (char **) calloc(MAX_KEYS + 1, sizeof(char *));
 	values = (char **) calloc(MAX_KEYS + 1, sizeof(char *));
+	if (keywords == NULL || values == NULL) {
+		free(keywords);
+		free(values);
+		free(conf);
+		return NULL;
+	}
 
 	if (conf->host) {
 		addKeyValue(keywords, values, "host", conf->host, MAX_KEYS);
@@ -137,7 +143,9 @@ void *be_pg_init()
 	free(keywords);
 	free(values);
 
-	if (PQstatus(conf->conn) == CONNECTION_BAD) {
+	if (conf->conn == NULL || PQstatus(conf->conn) == CONNECTION_BAD) {
+		if (conf->conn != NULL)
+			PQfinish(conf->conn);
 		free(conf);
 		_fatal("We were unable to connect to the database");
 		return (NULL);
@@ -152,12 +160,6 @@ void be_pg_destroy(void *handle)
 
 	if (conf) {
 		PQfinish(conf->conn);
-		if (conf->userquery)
-			free(conf->userquery);
-		if (conf->superquery)
-			free(conf->superquery);
-		if (conf->aclquery)
-			free(conf->aclquery);
 		free(conf);
 	}
 }
@@ -180,6 +182,10 @@ int be_pg_getuser(void *handle, const char *username, const char *password, char
 
 	res = PQexecParams(conf->conn, conf->userquery, 1, NULL, values, lengths, binary, 0);
 
+	if (res == NULL) {
+		_log(LOG_NOTICE, "PostgreSQL query failed without a result");
+		return BACKEND_ERROR;
+	}
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		_log(LOG_DEBUG, "%s\n", PQresultErrorMessage(res));
 		if(PQstatus(conf->conn) == CONNECTION_BAD){
@@ -236,6 +242,10 @@ int be_pg_superuser(void *handle, const char *username)
 
 	res = PQexecParams(conf->conn, conf->superquery, 1, NULL, values, lengths, binary, 0);
 
+	if (res == NULL) {
+		_log(LOG_NOTICE, "PostgreSQL query failed without a result");
+		return BACKEND_ERROR;
+	}
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		fprintf(stderr, "%s\n", PQresultErrorMessage(res));
 		issuper = BACKEND_ERROR;
@@ -302,10 +312,14 @@ int be_pg_aclcheck(void *handle, const char *clientid, const char *username, con
 	snprintf(accbuffer, buflen, "%d", acc);
 
 	const char *values[2] = {username, accbuffer};
-	int lengths[2] = {strlen(username), buflen};
+	int lengths[2] = {(int)strlen(username), (int)strlen(accbuffer)};
 
 	res = PQexecParams(conf->conn, conf->aclquery, 2, NULL, values, lengths, NULL, 0);
 
+	if (res == NULL) {
+		_log(LOG_NOTICE, "PostgreSQL query failed without a result");
+		return BACKEND_ERROR;
+	}
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		fprintf(stderr, "%s\n", PQresultErrorMessage(res));
 		match = BACKEND_ERROR;

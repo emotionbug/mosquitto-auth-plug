@@ -38,6 +38,15 @@
 #include "envs.h"
 #include <curl/curl.h>
 
+static int append_header(struct curl_slist **headers, const char *value)
+{
+	struct curl_slist *updated = curl_slist_append(*headers, value);
+	if (updated == NULL)
+		return -1;
+	*headers = updated;
+	return 0;
+}
+
 static int get_string_envs(CURL *curl, const char *required_env, char *querystring)
 {
 	char *data = NULL;
@@ -51,23 +60,28 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 	int i, num = 0;
 
 
-	env_string = (char *)malloc( strlen(required_env) + 20);
+	env_string = strdup(required_env);
 	if (env_string == NULL) {
-		_fatal("ENOMEM");
 		return (-1);
 	}
-	sprintf(env_string, "%s", required_env);
 
 
 	num = get_sys_envs(env_string, ",", "=", params_key, env_names, env_value);
 	for( i = 0; i < num; i++ ){
 		escaped_key = curl_easy_escape(curl, params_key[i], 0);
 		escaped_val = curl_easy_escape(curl, env_value[i], 0);
-
+		if (escaped_key == NULL || escaped_val == NULL) {
+			curl_free(escaped_key);
+			curl_free(escaped_val);
+			free(env_string);
+			return -1;
+		}
 
 		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 4);
 		if ( data == NULL ) {
-			_fatal("ENOMEM");
+			curl_free(escaped_key);
+			curl_free(escaped_val);
+			free(env_string);
 			return (-1);
 		}
 		if (strlen(querystring) + strlen(escaped_key) + strlen(escaped_val) + 3 > MAXPARAMSLEN) {
@@ -95,13 +109,16 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 static int http_post(void *handle, char *uri, const char *clientid, const char *username, const char *password, const char *topic, int acc, int method)
 {
 	struct http_backend *conf = (struct http_backend *)handle;
-	CURL *curl;
+	CURL *curl = NULL;
 	struct curl_slist *headerlist=NULL;
-	int re, urllen = 0;
+	int re, urllen;
 	long respCode = 0;
 	int ok = BACKEND_DEFER;
-	char *url;
-	char *data;
+	char *url = NULL;
+	char *data = NULL;
+	char *escaped_username = NULL, *escaped_password = NULL;
+	char *escaped_topic = NULL, *escaped_clientid = NULL;
+	char *string_envs = NULL;
 
 	if (username == NULL) {
 		return BACKEND_DEFER;
@@ -112,47 +129,51 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	topic    = (topic && *topic) ? topic : "";
 
 	if ((curl = curl_easy_init()) == NULL) {
-		_fatal("create curl_easy_handle fails");
 		return BACKEND_ERROR;
 	}
-	if (conf->hostheader != NULL)
-		headerlist = curl_slist_append(headerlist, conf->hostheader);
-	headerlist = curl_slist_append(headerlist, "Expect:");
+	if (conf->hostheader != NULL && append_header(&headerlist, conf->hostheader) != 0)
+		goto cleanup;
+	if (append_header(&headerlist, "Expect:") != 0)
+		goto cleanup;
 
 	if(conf->basic_auth !=NULL){
-		headerlist = curl_slist_append(headerlist, conf->basic_auth);
+		if (append_header(&headerlist, conf->basic_auth) != 0)
+			goto cleanup;
 	}
 
 
-	urllen = strlen(conf->hostname) + strlen(uri) + 20;
-	url = (char *)malloc(urllen);
+	urllen = snprintf(NULL, 0, "%s://%s:%d%s",
+		strcmp(conf->with_tls, "true") == 0 ? "https" : "http",
+		conf->hostname ? conf->hostname : "127.0.0.1", conf->port, uri);
+	if (urllen < 0)
+		goto cleanup;
+	url = (char *)malloc((size_t)urllen + 1);
 	if (url == NULL) {
-		_fatal("ENOMEM");
-		return BACKEND_ERROR;
+		goto cleanup;
 	}
 
 	// uri begins with a slash
-	snprintf(url, urllen, "%s://%s:%d%s",
+	snprintf(url, (size_t)urllen + 1, "%s://%s:%d%s",
 		strcmp(conf->with_tls, "true") == 0 ? "https" : "http",
 		conf->hostname ? conf->hostname : "127.0.0.1",
 		conf->port,
 		uri);
 
-	char* escaped_username = curl_easy_escape(curl, username, 0);
-	char* escaped_password = curl_easy_escape(curl, password, 0);
-	char* escaped_topic = curl_easy_escape(curl, topic, 0);
-	char* escaped_clientid = curl_easy_escape(curl, clientid, 0);
+	escaped_username = curl_easy_escape(curl, username, 0);
+	escaped_password = curl_easy_escape(curl, password, 0);
+	escaped_topic = curl_easy_escape(curl, topic, 0);
+	escaped_clientid = curl_easy_escape(curl, clientid, 0);
+	if (escaped_username == NULL || escaped_password == NULL ||
+	    escaped_topic == NULL || escaped_clientid == NULL)
+		goto cleanup;
 
 	char string_acc[20];
 	snprintf(string_acc, 20, "%d", acc);
 
-	char *string_envs = (char *)malloc(MAXPARAMSLEN);
+	string_envs = (char *)calloc(1, MAXPARAMSLEN);
 	if (string_envs == NULL) {
-		_fatal("ENOMEM");
-		return BACKEND_ERROR;
+		goto cleanup;
 	}
-
-	memset(string_envs, 0, MAXPARAMSLEN);
 
 	//get the sys_env from here
 	int env_num = 0;
@@ -164,22 +185,13 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		env_num = get_string_envs(curl, conf->aclcheck_envs, string_envs);
 	}
 	if( env_num == -1 ){
-		free(string_envs);
-		free(url);
-		curl_free(escaped_username);
-		curl_free(escaped_password);
-		curl_free(escaped_topic);
-		curl_free(escaped_clientid);
-		curl_slist_free_all(headerlist);
-		curl_easy_cleanup(curl);
-		return BACKEND_ERROR;
+		goto cleanup;
 	}
 	//---- over ----
 
 	data = (char *)malloc(strlen(string_envs) + strlen(escaped_username) + strlen(escaped_password) + strlen(escaped_topic) + strlen(string_acc) + strlen(escaped_clientid) + 50);
 	if (data == NULL) {
-		_fatal("ENOMEM");
-		return BACKEND_ERROR;
+		goto cleanup;
 	}
 	sprintf(data, "%susername=%s&password=%s&topic=%s&acc=%s&clientid=%s",
 		string_envs,
@@ -213,8 +225,10 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		ok = BACKEND_ERROR;
 	}
 
-	curl_easy_cleanup(curl);
-	curl_slist_free_all (headerlist);
+cleanup:
+	if (curl != NULL)
+		curl_easy_cleanup(curl);
+	curl_slist_free_all(headerlist);
 	free(url);
 	free(data);
 	free(string_envs);
@@ -256,11 +270,21 @@ void *be_http_init()
 	}
 
 	conf = (struct http_backend *)malloc(sizeof(struct http_backend));
+	if (conf == NULL) {
+		curl_global_cleanup();
+		return NULL;
+	}
 	conf->hostname = hostname;
 	conf->port = p_stab("http_port") == NULL ? 80 : atoi(p_stab("http_port"));
 	if (p_stab("http_hostname") != NULL) {
-		conf->hostheader = (char *)malloc(128);
-		sprintf(conf->hostheader, "Host: %s", p_stab("http_hostname"));
+		size_t header_len = strlen("Host: ") + strlen(p_stab("http_hostname")) + 1;
+		conf->hostheader = (char *)malloc(header_len);
+		if (conf->hostheader == NULL) {
+			free(conf);
+			curl_global_cleanup();
+			return NULL;
+		}
+		snprintf(conf->hostheader, header_len, "Host: %s", p_stab("http_hostname"));
 	} else {
 		conf->hostheader = NULL;
 	}
@@ -273,6 +297,12 @@ void *be_http_init()
 	conf->aclcheck_envs = p_stab("http_aclcheck_params");
 	if(p_stab("http_basic_auth_key")!= NULL){
 		conf->basic_auth = (char *)malloc( strlen("Authorization: Basic %s") + strlen(p_stab("http_basic_auth_key")));
+		if (conf->basic_auth == NULL) {
+			free(conf->hostheader);
+			free(conf);
+			curl_global_cleanup();
+			return NULL;
+		}
 		sprintf(conf->basic_auth, "Authorization: Basic %s",p_stab("http_basic_auth_key"));
 	} else {
 		conf->basic_auth = NULL;
@@ -303,6 +333,8 @@ void be_http_destroy(void *handle)
 	struct http_backend *conf = (struct http_backend *)handle;
 
 	if (conf) {
+		free(conf->hostheader);
+		free(conf->basic_auth);
 		curl_global_cleanup();
 		free(conf);
 	}

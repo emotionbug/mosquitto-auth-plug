@@ -28,6 +28,6 @@
  */
 
 void p_add(char *name, char *value);
-void p_freeall();
+void p_freeall(void);
 char *p_stab(const char *key);
-void p_dump();
+void p_dump(void);

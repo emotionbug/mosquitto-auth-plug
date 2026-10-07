@@ -35,11 +35,14 @@ const char *be_mongo_get_option(const char *opt_name, const char *dep_opt_name, 
 mongoc_uri_t *be_mongo_new_uri_from_options();
 bool be_mongo_check_acl_topics_array(const bson_iter_t *topics, const char *req_topic, const char *clientid, const char *username);
 bool be_mongo_check_acl_topics_map(const bson_iter_t *topics, const char *req_topic, int req_access, const char *clientid, const char *username);
+void be_mongo_destroy(void *handle);
 
 void *be_mongo_init()
 {
 	struct mongo_backend *conf;
-	conf = (struct mongo_backend *)malloc(sizeof(struct mongo_backend));
+	conf = (struct mongo_backend *)calloc(1, sizeof(struct mongo_backend));
+	if (conf == NULL)
+		return NULL;
 
 	conf->database = strdup(be_mongo_get_option("mongo_database", NULL, "mqGate"));
 	conf->user_coll = strdup(be_mongo_get_option("mongo_user_coll", "mongo_collection_users", "users"));
@@ -51,14 +54,27 @@ void *be_mongo_init()
 	conf->user_topiclist_fk_prop = strdup(be_mongo_get_option("mongo_user_topiclist_fk_prop", "mongo_location_topic", "topics"));
 	conf->topiclist_key_prop = strdup(be_mongo_get_option("mongo_topiclist_key_prop", "mongo_location_superuser", "_id"));
 	conf->topiclist_topics_prop = strdup(be_mongo_get_option("mongo_topiclist_topics_prop", "mongo_location_topic", "topics"));
+	if (conf->database == NULL || conf->user_coll == NULL || conf->topiclist_coll == NULL ||
+	    conf->user_username_prop == NULL || conf->user_password_prop == NULL ||
+	    conf->user_superuser_prop == NULL || conf->user_topics_prop == NULL ||
+	    conf->user_topiclist_fk_prop == NULL || conf->topiclist_key_prop == NULL ||
+	    conf->topiclist_topics_prop == NULL) {
+		be_mongo_destroy(conf);
+		return NULL;
+	}
 
 	mongoc_init();
 	mongoc_uri_t *uri = be_mongo_new_uri_from_options();
 	if (!uri) {
-		_fatal("MongoDB connection options invalid");
+		be_mongo_destroy(conf);
+		return NULL;
 	}
 	conf->client = mongoc_client_new_from_uri(uri);
 	mongoc_uri_destroy(uri);
+	if (conf->client == NULL) {
+		be_mongo_destroy(conf);
+		return NULL;
+	}
 
 	return (conf);
 }
@@ -136,7 +152,7 @@ int be_mongo_getuser(void *handle, const char *username, const char *password, c
 		mongoc_cursor_next (cursor, &doc)) {
 
 		bson_iter_init(&iter, doc);
-		if (bson_iter_find(&iter, conf->user_password_prop)) {
+		if (bson_iter_find(&iter, conf->user_password_prop) && BSON_ITER_HOLDS_UTF8(&iter)) {
 			const char *password_src = bson_iter_utf8(&iter, NULL);
 			size_t password_len = strlen(password_src) + 1;
 			result = (char *) malloc(password_len);
@@ -176,7 +192,8 @@ void be_mongo_destroy(void *handle)
 		free(conf->topiclist_key_prop);
 		free(conf->topiclist_topics_prop);
 
-		mongoc_client_destroy(conf->client);
+		if (conf->client != NULL)
+			mongoc_client_destroy(conf->client);
 		conf->client = NULL;
 		free(conf);
 	}
@@ -325,6 +342,8 @@ bool be_mongo_check_acl_topics_array(const bson_iter_t *topics, const char *req_
 	bson_iter_recurse(topics, &iter);
 
 	while (bson_iter_next(&iter)) {
+		if (!BSON_ITER_HOLDS_UTF8(&iter))
+			continue;
 		const char *permitted_topic = bson_iter_utf8(&iter, NULL);
 		bool topic_matches = false;
 

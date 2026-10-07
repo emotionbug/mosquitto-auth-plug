@@ -56,18 +56,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential clang cmake perl python3 libcjson-dev curl ca-certificates pkg-config \
+            build-essential clang cppcheck valgrind cmake perl python3 curl ca-certificates pkg-config \
             libsqlite3-dev libhiredis-dev libmariadb-dev libpq-dev libldap2-dev \
-            libmongoc-dev libbson-dev libmemcached-dev redis-server memcached slapd ldap-utils \
+            libmemcached-dev redis-server memcached slapd ldap-utils \
             python3-pymongo python3-psycopg2 python3-pymysql python3-redis
       - name: Check script syntax
         run: |
           bash -n build-http.sh
           bash -n .ci/build-dependencies.sh
           bash -n .ci/build-backends.sh
+          bash -n .ci/run-security-checks.sh
+          bash -n .ci/run-valgrind-http.sh
           python3 -m py_compile tests/test_http_plugin.py tests/test_backends.py tests/test_hashes.py
       - name: Build pinned TLS and broker dependencies
         run: bash .ci/build-dependencies.sh "$GITHUB_WORKSPACE/build/deps"
+      - name: Run sanitizer and static security checks
+        run: CC=clang bash .ci/run-security-checks.sh "$GITHUB_WORKSPACE/build/deps/openssl" "$GITHUB_WORKSPACE/build/security"
       - name: Build and test HTTP plugin with GCC and Clang
         run: |
           for compiler in gcc clang; do
@@ -82,8 +86,18 @@ jobs:
               --plugin "$output/auth-plug.so" \
               --openssl-prefix "$GITHUB_WORKSPACE/build/deps/openssl" \
               --curl-prefix "$GITHUB_WORKSPACE/build/deps/curl" \
+              --cjson-prefix "$GITHUB_WORKSPACE/build/deps/cjson" \
               --artifacts-dir "$output/tests" 2>&1 | tee "$output/tests.log"
           done
+      - name: Check HTTP broker shutdown for definite leaks
+        run: |
+          bash .ci/run-valgrind-http.sh \
+            "$GITHUB_WORKSPACE/build/deps/mosquitto/sbin/mosquitto" \
+            "$GITHUB_WORKSPACE/build/clang/auth-plug.so" \
+            "$GITHUB_WORKSPACE/build/deps/openssl" \
+            "$GITHUB_WORKSPACE/build/deps/curl" \
+            "$GITHUB_WORKSPACE/build/deps/cjson" \
+            "$GITHUB_WORKSPACE/build/valgrind"
       - name: Build and test all upstream backends with GCC and Clang
         run: |
           for compiler in gcc clang; do
@@ -115,3 +129,5 @@ jobs:
             build/backends-*/*.txt
             build/backends-*/tests/*.json
             build/backends-*/tests/*.log
+            build/security/
+            build/valgrind/

@@ -55,20 +55,22 @@ static int be_memcached_reconnect(struct memcached_backend *conf)
 		conf->memcached = NULL;
 	}
 	conf->memcached = memcached_create(NULL);
+	if (conf->memcached == NULL) {
+		_log(LOG_NOTICE, "Memcached allocation error for %s:%d", conf->host, conf->port);
+		return 1;
+	}
 
 	memcached_return memcachedReply;
 	memcached_server_st *servers;
 
 	servers = memcached_server_list_append(NULL, conf->host, conf->port, &memcachedReply);
+	if (servers == NULL)
+		return 1;
 	memcachedReply = memcached_server_push(conf->memcached, servers);
 	memcached_server_list_free(servers);
-
-	//error message in memcached_st is called memcached_error_t but it is weird
-	if (conf->memcached == NULL) {
-		_log(LOG_NOTICE, "Memcached connection error for %s:%d\n",
-		     conf->host, conf->port);
+	if (memcachedReply != MEMCACHED_SUCCESS)
 		return 1;
-	}
+
 	//there is no database password in memcached
 
 		// check memcachced connection
@@ -77,6 +79,8 @@ static int be_memcached_reconnect(struct memcached_backend *conf)
 	if (stats == NULL && rc != MEMCACHED_SUCCESS && rc != MEMCACHED_SOME_ERRORS) {
 		return 2;
 	}
+	if (stats != NULL)
+		memcached_stat_free(conf->memcached, stats);
 	return 0;
 }
 
@@ -102,8 +106,10 @@ void *be_memcached_init()
 		aclquery = "";
 	}
 	conf = (struct memcached_backend *)malloc(sizeof(struct memcached_backend));
-	if (conf == NULL)
+	if (conf == NULL) {
 		_fatal("Out of memory");
+		return NULL;
+	}
 
 	conf->host = strdup(host);
 	conf->port = atoi(p);
@@ -111,6 +117,15 @@ void *be_memcached_init()
 	conf->dbpass = strdup(password);
 	conf->userquery = strdup(userquery);
 	conf->aclquery = strdup(aclquery);
+	if (conf->host == NULL || conf->dbpass == NULL ||
+	    conf->userquery == NULL || conf->aclquery == NULL) {
+		free(conf->host);
+		free(conf->userquery);
+		free(conf->dbpass);
+		free(conf->aclquery);
+		free(conf);
+		return NULL;
+	}
 
 	conf->memcached = NULL;
 
@@ -132,6 +147,10 @@ void be_memcached_destroy(void *handle)
 	if (conf != NULL) {
 		memcached_free(conf->memcached);
 		conf->memcached = NULL;
+		free(conf->host);
+		free(conf->userquery);
+		free(conf->aclquery);
+		free(conf->dbpass);
 		free(conf);
 	}
 }
@@ -150,7 +169,12 @@ int be_memcached_getuser(void *handle, const char *username, const char *passwor
 
 	value = memcached_get(conf->memcached, username, strlen(username), &value_length, &flags, &rc);
 
+	if (rc == MEMCACHED_NOTFOUND) {
+		free(value);
+		return BACKEND_DEFER;
+	}
 	if (value == NULL || rc != MEMCACHED_SUCCESS) {
+		free(value);
 		be_memcached_reconnect(conf);
 		return (BACKEND_DEFER);
 	}
@@ -186,9 +210,13 @@ int be_memcached_aclcheck(void *handle, const char *clientid, const char *userna
 	value = memcached_get(conf->memcached, query, strlen(query), &value_length, &flags, &rc);
 	free(query);
 	if (rc == MEMCACHED_NOTFOUND)
+	{
+		free(value);
 		return BACKEND_DEFER;
+	}
 
 	if (value == NULL || rc != MEMCACHED_SUCCESS) {
+		free(value);
 		be_memcached_reconnect(conf);
 		return BACKEND_ERROR;
 	}

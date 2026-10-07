@@ -92,22 +92,30 @@ int base64_encode(const void *data, int size, char **str)
   return strlen(s);
 }
 
-int base64_decode(const char *str, void *data)
+int base64_decode(const char *str, void *data, size_t capacity)
 {
   const char *p;
   unsigned char *q;
+  size_t len, produced = 0;
   int c;
   int x;
-  int done = 0;
+
+  if (str == NULL || data == NULL)
+    return -1;
+
+  len = strlen(str);
+  if (len == 0 || len % 4 != 0)
+    return -1;
+
   q=(unsigned char*)data;
-  for(p=str; *p && !done; p+=4){
+  for(p=str; *p; p+=4){
+    int padding = 0;
+
     x = pos(p[0]);
     if(x >= 0)
       c = x;
-    else{
-      done = 3;
-      break;
-    }
+    else
+      return -1;
     c*=64;
     
     x = pos(p[1]);
@@ -117,8 +125,11 @@ int base64_decode(const char *str, void *data)
       return -1;
     c*=64;
     
-    if(p[2] == '=')
-      done++;
+    if(p[2] == '=') {
+      padding = 2;
+      if(p[3] != '=' || p[4] != '\0')
+        return -1;
+    }
     else{
       x = pos(p[2]);
       if(x >= 0)
@@ -128,10 +139,14 @@ int base64_decode(const char *str, void *data)
     }
     c*=64;
     
-    if(p[3] == '=')
-      done++;
+    if(p[3] == '=') {
+      if(padding == 0)
+        padding = 1;
+      if(p[4] != '\0')
+        return -1;
+    }
     else{
-      if(done)
+      if(padding)
 	return -1;
       x = pos(p[3]);
       if(x >= 0)
@@ -139,13 +154,17 @@ int base64_decode(const char *str, void *data)
       else
 	return -1;
     }
-    if(done < 3)
+    if(produced + (size_t)(3 - padding) > capacity)
+      return -1;
+
+    if(padding < 3)
       *q++=(c&0x00ff0000)>>16;
       
-    if(done < 2)
+    if(padding < 2)
       *q++=(c&0x0000ff00)>>8;
-    if(done < 1)
+    if(padding < 1)
       *q++=(c&0x000000ff)>>0;
+    produced += (size_t)(3 - padding);
   }
-  return q - (unsigned char*)data;
+  return (int)produced;
 }

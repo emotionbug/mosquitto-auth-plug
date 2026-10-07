@@ -99,7 +99,7 @@ void *be_mysql_init()
 	ssl_capath = p_stab("ssl_capath");
 	ssl_cipher = p_stab("ssl_cipher");
 		
-	host = (host) ? host : strdup("localhost");
+	host = (host) ? host : "localhost";
 	port = (!p) ? 3306 : atoi(p);
 
 	userquery = p_stab("userquery");
@@ -152,12 +152,6 @@ void be_mysql_destroy(void *handle)
 
 	if (conf) {
 		mysql_close(conf->mysql);
-		if (conf->userquery)
-			free(conf->userquery);
-		if (conf->superquery)
-			free(conf->superquery);
-		if (conf->aclquery)
-			free(conf->aclquery);
 		free(conf);
 	}
 }
@@ -224,6 +218,10 @@ int be_mysql_getuser(void *handle, const char *username, const char *password, c
 		goto out;
 	}
 	res = mysql_store_result(conf->mysql);
+	if (res == NULL) {
+		_log(LOG_NOTICE, "%s", mysql_error(conf->mysql));
+		goto out;
+	}
 	if ((nrows = mysql_num_rows(res)) != 1) {
 		//DEBUG fprintf(stderr, "rowcount = %ld; not ok\n", nrows);
 		goto out;
@@ -241,7 +239,8 @@ int be_mysql_getuser(void *handle, const char *username, const char *password, c
 
 out:
 
-	mysql_free_result(res);
+	if (res != NULL)
+		mysql_free_result(res);
 	free(query);
 
 	*phash = value;
@@ -287,6 +286,11 @@ int be_mysql_superuser(void *handle, const char *username)
 		goto out;
 	}
 	res = mysql_store_result(conf->mysql);
+	if (res == NULL) {
+		_log(LOG_NOTICE, "%s", mysql_error(conf->mysql));
+		issuper = BACKEND_ERROR;
+		goto out;
+	}
 	if ((nrows = mysql_num_rows(res)) != 1) {
 		goto out;
 	}
@@ -301,7 +305,8 @@ int be_mysql_superuser(void *handle, const char *username)
 
 out:
 
-	mysql_free_result(res);
+	if (res != NULL)
+		mysql_free_result(res);
 	free(query);
 
 	return (issuper);
@@ -355,6 +360,11 @@ int be_mysql_aclcheck(void *handle, const char *clientid, const char *username, 
 		goto out;
 	}
 	res = mysql_store_result(conf->mysql);
+	if (res == NULL) {
+		_log(LOG_NOTICE, "%s", mysql_error(conf->mysql));
+		match = BACKEND_ERROR;
+		goto out;
+	}
 	if (mysql_num_fields(res) != 1) {
 		fprintf(stderr, "numfields not ok\n");
 		goto out;
@@ -383,7 +393,8 @@ int be_mysql_aclcheck(void *handle, const char *clientid, const char *username, 
 
 out:
 
-	mysql_free_result(res);
+	if (res != NULL)
+		mysql_free_result(res);
 	free(query);
 
 	return (match);

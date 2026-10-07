@@ -24,9 +24,12 @@ cd "$source_dir"
 cp LICENSE.txt "$output_dir/LICENSE.mosquitto-auth-plug.txt"
 readelf -d "$output_dir/auth-plug.so" > "$output_dir/dynamic.txt"
 ldd "$output_dir/auth-plug.so" > "$output_dir/ldd.txt"
-if grep -Eq 'lib(crypto|ssl)\.so\.(10|1[.]|0[.])|not found' "$output_dir/ldd.txt"; then
-  echo "Legacy TLS libraries or unresolved dependencies remain." >&2
-  cat "$output_dir/ldd.txt" >&2
+ldd "$mosquitto_prefix/lib/libmosquitto.so.1" > "$output_dir/mosquitto-ldd.txt"
+if grep -Eq 'lib(crypto|ssl)\.so\.(10|1[.]|0[.])|not found' \
+    "$output_dir/ldd.txt" "$output_dir/mosquitto-ldd.txt" || \
+    grep -Eq 'libcjson\.so[^ ]* => /(usr/)?lib/' "$output_dir/mosquitto-ldd.txt"; then
+  echo "A legacy TLS library, system cJSON, or unresolved dependency remains." >&2
+  cat "$output_dir/ldd.txt" "$output_dir/mosquitto-ldd.txt" >&2
   exit 1
 fi
 sha256sum "$output_dir/auth-plug.so" > "$output_dir/auth-plug.so.sha256"

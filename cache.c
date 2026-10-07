@@ -42,7 +42,7 @@
 static unsigned int sha_hash(const char *data, size_t size, unsigned char *out)
 {
 	unsigned int md_len = -1;
-	const EVP_MD *md = EVP_get_digestbyname("SHA1");
+	const EVP_MD *md = EVP_sha256();
 
 	if (md != NULL) {
 #if OPENSSL_VERSION_NUMBER < 0x10100000 || defined(LIBRESSL_VERSION_NUMBER)
@@ -50,10 +50,12 @@ static unsigned int sha_hash(const char *data, size_t size, unsigned char *out)
 #else
 		EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 #endif
-		EVP_MD_CTX_init(mdctx);
-		EVP_DigestInit_ex(mdctx, md, NULL);
-		EVP_DigestUpdate(mdctx, data, size);
-		EVP_DigestFinal_ex(mdctx, out, &md_len);
+		if (mdctx == NULL)
+			return 0;
+		if (EVP_DigestInit_ex(mdctx, md, NULL) != 1 ||
+		    EVP_DigestUpdate(mdctx, data, size) != 1 ||
+		    EVP_DigestFinal_ex(mdctx, out, &md_len) != 1)
+			md_len = 0;
 #if OPENSSL_VERSION_NUMBER < 0x10100000 || defined(LIBRESSL_VERSION_NUMBER)
 		EVP_MD_CTX_destroy(mdctx);
 #else
@@ -63,20 +65,21 @@ static unsigned int sha_hash(const char *data, size_t size, unsigned char *out)
 	return md_len;
 }
 
-static void hexify(const char *data, char *hex)
+static int hexify(const char *data, char *hex)
 {
-	unsigned char hashdata[SHA_DIGEST_LENGTH];
+	unsigned char hashdata[SHA256_DIGEST_LENGTH];
 	int mdlen, i;
 
 	mdlen = sha_hash(data, strlen(data), hashdata);
-	if (mdlen != SHA_DIGEST_LENGTH) {
-		return;
+	if (mdlen != SHA256_DIGEST_LENGTH) {
+		return 0;
 	}
 
 	// printf("mdlen=%d, string=%s\n\thash=", mdlen, data);
 	for (i = 0, *hex = 0; i < sizeof(hashdata) / sizeof(hashdata[0]); i++) {
 		sprintf(hex + (i*2), "%02X", hashdata[i]);
 	}
+	return 1;
 	// printf("%s\n", hex);
 }
 
@@ -87,7 +90,7 @@ static void hexify(const char *data, char *hex)
 void acl_cache(const char *clientid, const char *username, const char *topic, int access, int granted, void *userdata)
 {
 	char *data;
-	char hex[SHA_DIGEST_LENGTH * 2 + 1];
+	char hex[SHA256_DIGEST_LENGTH * 2 + 1];
 	struct cacheentry *a, *tmp;
 	struct userdata *ud = (struct userdata *)userdata;
 	time_t cacheseconds = ud->acl_cacheseconds;
@@ -112,21 +115,28 @@ void acl_cache(const char *clientid, const char *username, const char *topic, in
 
 	/* Length prefixes prevent colons in identities from merging distinct keys. */
 	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 96);
+	if (data == NULL)
+		return;
 	sprintf(data, "%zu:%s%zu:%s%zu:%s:%d", strlen(clientid), clientid, strlen(username), username, strlen(topic), topic, access);
-	hexify(data, hex);
+	if (!hexify(data, hex)) {
+		free(data);
+		return;
+	}
 	free(data);
 
 	HASH_FIND_STR(ud->aclcache, hex, a);
 	if (a) {
 		a->granted = granted;
 
-		if (time(NULL) > a->expire_time) {
+		if (time(NULL) >= a->expire_time) {
 			_log(LOG_DEBUG, " Expired [%s] for (%s,%s,%d)", hex, clientid, username, access);
 			HASH_DEL(ud->aclcache, a);
 			free(a);
 		}
 	} else {
 		a = (struct cacheentry *)malloc(sizeof(struct cacheentry));
+		if (a == NULL)
+			return;
 		strcpy(a->hex, hex);
 		a->granted = granted;
 		a->expire_time = now + cacheseconds;
@@ -140,7 +150,7 @@ void acl_cache(const char *clientid, const char *username, const char *topic, in
 	 */
 
 	HASH_ITER(hh, ud->aclcache, a, tmp) {
-		if (now > a->expire_time) {
+		if (now >= a->expire_time) {
 			_log(LOG_DEBUG, " Cleanup [%s]", a->hex);
 			HASH_DEL(ud->aclcache, a);
 			free(a);
@@ -151,7 +161,7 @@ void acl_cache(const char *clientid, const char *username, const char *topic, in
 int acl_cache_q(const char *clientid, const char *username, const char *topic, int access, void *userdata)
 {
 	char *data;
-	char hex[SHA_DIGEST_LENGTH * 2 + 1];
+	char hex[SHA256_DIGEST_LENGTH * 2 + 1];
 	struct cacheentry *a;
 	struct userdata *ud = (struct userdata *)userdata;
 	int granted = MOSQ_ERR_UNKNOWN;
@@ -165,15 +175,20 @@ int acl_cache_q(const char *clientid, const char *username, const char *topic, i
 	}
 
 	data = malloc(strlen(clientid) + strlen(username) + strlen(topic) + 96);
+	if (data == NULL)
+		return MOSQ_ERR_UNKNOWN;
 	sprintf(data, "%zu:%s%zu:%s%zu:%s:%d", strlen(clientid), clientid, strlen(username), username, strlen(topic), topic, access);
-	hexify(data, hex);
+	if (!hexify(data, hex)) {
+		free(data);
+		return MOSQ_ERR_UNKNOWN;
+	}
 	free(data);
 
 	HASH_FIND_STR(ud->aclcache, hex, a);
 	if (a) {
 		// printf("---> CACHED! %d\n", a->granted);
 
-		if (time(NULL) > a->expire_time) {
+		if (time(NULL) >= a->expire_time) {
 			_log(LOG_DEBUG, " Expired [%s] for (%s,%s,%d)", hex, clientid, username, access);
 			HASH_DEL(ud->aclcache, a);
 			free(a);
@@ -191,7 +206,7 @@ int acl_cache_q(const char *clientid, const char *username, const char *topic, i
 void auth_cache(const char *username, const char *password, int granted, void *userdata)
 {
 	char *data;
-	char hex[SHA_DIGEST_LENGTH * 2 + 1];
+	char hex[SHA256_DIGEST_LENGTH * 2 + 1];
 	struct cacheentry *a, *tmp;
 	struct userdata *ud = (struct userdata *)userdata;
 	time_t cacheseconds = ud->auth_cacheseconds;
@@ -215,21 +230,28 @@ void auth_cache(const char *username, const char *password, int granted, void *u
 	now = time(NULL);
 
 	data = malloc(strlen(username) + strlen(password) + 64);
+	if (data == NULL)
+		return;
 	sprintf(data, "%zu:%s%zu:%s", strlen(username), username, strlen(password), password);
-	hexify(data, hex);
+	if (!hexify(data, hex)) {
+		free(data);
+		return;
+	}
 	free(data);
 
 	HASH_FIND_STR(ud->authcache, hex, a);
 	if (a) {
 		a->granted = granted;
 
-		if (time(NULL) > a->expire_time) {
+		if (time(NULL) >= a->expire_time) {
 			_log(LOG_DEBUG, " Expired [%s] for (%s)", hex, username);
 			HASH_DEL(ud->authcache, a);
 			free(a);
 		}
 	} else {
 		a = (struct cacheentry *)malloc(sizeof(struct cacheentry));
+		if (a == NULL)
+			return;
 		strcpy(a->hex, hex);
 		a->granted = granted;
 		a->expire_time = now + cacheseconds;
@@ -244,7 +266,7 @@ void auth_cache(const char *username, const char *password, int granted, void *u
 	 */
 
 	HASH_ITER(hh, ud->authcache, a, tmp) {
-		if (now > a->expire_time) {
+		if (now >= a->expire_time) {
 			_log(LOG_DEBUG, " Cleanup [%s]", a->hex);
 			HASH_DEL(ud->authcache, a);
 			free(a);
@@ -256,7 +278,7 @@ void auth_cache(const char *username, const char *password, int granted, void *u
 int auth_cache_q(const char *username, const char *password, void *userdata)
 {
 	char *data;
-	char hex[SHA_DIGEST_LENGTH * 2 + 1];
+	char hex[SHA256_DIGEST_LENGTH * 2 + 1];
 	struct cacheentry *a;
 	struct userdata *ud = (struct userdata *)userdata;
 	int granted = MOSQ_ERR_UNKNOWN;
@@ -270,13 +292,18 @@ int auth_cache_q(const char *username, const char *password, void *userdata)
 	}
 
 	data = malloc(strlen(username) + strlen(password) + 64);
+	if (data == NULL)
+		return MOSQ_ERR_UNKNOWN;
 	sprintf(data, "%zu:%s%zu:%s", strlen(username), username, strlen(password), password);
-	hexify(data, hex);
+	if (!hexify(data, hex)) {
+		free(data);
+		return MOSQ_ERR_UNKNOWN;
+	}
 	free(data);
 
 	HASH_FIND_STR(ud->authcache, hex, a);
 	if (a) {
-		if (time(NULL) > a->expire_time) {
+		if (time(NULL) >= a->expire_time) {
 			_log(LOG_DEBUG, " Expired [%s] for (%s)", hex, username);
 			HASH_DEL(ud->authcache, a);
 			free(a);

@@ -34,7 +34,12 @@ def main():
                 hashed = password_hash(digest=digest, raw=variant == "raw-salt", django=variant == "django").encode()
                 assert lib.pbkdf2_check(PASSWORD.encode(), hashed) == 1, (variant, digest)
                 assert lib.pbkdf2_check(b"wrong", hashed) == 0
-            for malformed in (b"", b"PBKDF2$sha256", b"PBKDF2$sha256$0$salt$AAAA"):
+            for malformed in (
+                b"", b"PBKDF2$sha256", b"PBKDF2$md5$1000$salt$AAAA",
+                b"PBKDF2$sha256$0$salt$AAAA", b"PBKDF2$sha256$-1$salt$AAAA",
+                b"PBKDF2$sha256$10000001$salt$AAAA", b"PBKDF2$sha256$12x$salt$AAAA",
+                b"PBKDF2$sha256$1000$salt$A", b"PBKDF2$sha256$1000$salt$AAAA$trailing",
+            ):
                 assert lib.pbkdf2_check(PASSWORD.encode(), malformed) == 0
         lib = ctypes.CDLL(str(args.build / "hash-default.so"))
         hashed = subprocess.check_output([str(args.build / "np"), "-p", PASSWORD, "-i", "1000"]).strip()

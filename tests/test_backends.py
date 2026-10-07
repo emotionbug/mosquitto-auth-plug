@@ -88,6 +88,10 @@ class Suite:
                 maps = pathlib.Path(f"/proc/{child.pid}/maps").read_text()
                 assert str(self.args.deps / "openssl/lib/libcrypto.so.3") in maps
                 assert str(self.args.deps / "openssl/lib/libssl.so.3") in maps
+                assert str(self.args.deps / "cjson/lib/libcjson.so.1") in maps
+                if not psk:
+                    assert str(self.args.deps / "mongo/lib/libmongoc-1.0.so.0") in maps
+                    assert str(self.args.deps / "mongo/lib/libbson-1.0.so.0") in maps
                 assert "libcrypto.so.10" not in maps and "libssl.so.10" not in maps
                 yield port, child
                 assert child.poll() is None, "Broker crashed during the test"
@@ -212,7 +216,7 @@ def main():
     suite.check("Will messages: allowed delivery and denied-topic suppression", wills)
 
     def auth_cache():
-        with suite.broker({**sqlite, "auth_cacheseconds": 1, "auth_cachejitter": 0}) as (port, _):
+        with suite.broker({**sqlite, "auth_cacheseconds": 3, "auth_cachejitter": 0}) as (port, _):
             suite.connect(port).close()
             with sqlite3.connect(db) as conn:
                 conn.execute("UPDATE users SET pw=? WHERE username='alice'", (password_hash("changed"),))
@@ -221,7 +225,7 @@ def main():
             with sqlite3.connect(db) as conn:
                 conn.execute("INSERT INTO users VALUES ('missing', ?)", (password_hash(),))
             suite.connect(port, "missing", allowed=False).close()
-            time.sleep(2.1)
+            time.sleep(3.2)
             suite.connect(port, allowed=False).close()
             suite.connect(port, "alice", "changed").close()
             suite.connect(port, "missing").close()
@@ -270,6 +274,8 @@ def main():
                 assert sock.recv(100) == b"STORED\r\n"
                 sock.sendall(f"set {user}-allowed/topic 0 0 1\r\n7\r\n".encode())
                 assert sock.recv(100) == b"STORED\r\n"
+        unusual_redis_user = "percent%s space"
+        store.set(f"user:{unusual_redis_user}", password_hash())
         for name, options in [
             ("Redis", dict(backends="redis", redis_host="127.0.0.1", redis_port=redis_port, redis_db=2,
                            redis_pass=DB_PASSWORD, redis_userquery="GET user:%s", redis_aclquery="GET acl:%s-%s")),
@@ -277,6 +283,13 @@ def main():
         ]:
             suite.check(f"{name}: authentication", lambda o=options: suite.auth(o))
             suite.check(f"{name}: exact-topic ACL allow/deny and static superuser", lambda o=options: suite.acl(o))
+        def redis_argument_boundaries():
+            options = dict(backends="redis", redis_host="127.0.0.1", redis_port=redis_port, redis_db=2,
+                           redis_pass=DB_PASSWORD, redis_userquery="GET user:%s")
+            with suite.broker(options) as (port, _):
+                suite.connect(port, unusual_redis_user).close()
+                suite.connect(port, "missing%s user", allowed=False).close()
+        suite.check("Redis: percent signs and spaces remain within one command argument", redis_argument_boundaries)
 
         for backend, port in [("mysql", 23306), ("postgres", 25432)]:
             def database_tests(backend=backend, port=port):
@@ -335,6 +348,12 @@ def main():
             try:
                 suite.auth(options)
                 suite.acl(options, backend_super=True)
+                db.users.update_one({"username": "alice"}, {"$set": {"password": 17}})
+                with suite.broker(options) as (port, _):
+                    suite.connect(port, allowed=False).close()
+                db.users.update_one({"username": "alice"}, {"$set": {"password": users["alice"]}})
+                db.users.update_one({"username": "alice"}, {"$set": {"topics": [17, "allowed/#"]}})
+                suite.acl(options)
                 for topics in ({"allowed/#": "rw"}, ["allowed/#"], "list-name", 0, 17, ObjectId()):
                     db.users.update_one({"username": "alice"}, {"$set": {"topics": topics}})
                     if not isinstance(topics, (dict, list)):
@@ -382,6 +401,16 @@ access to * by * read
         ldap = dict(backends="ldap", ldap_uri=f"ldap://127.0.0.1:{ldap_port}/dc=example,dc=org?cn?sub?(uid=@)",
                     binddn="cn=admin,dc=example,dc=org", bindpw=DB_PASSWORD)
         suite.check("LDAP: user search/bind and default unrestricted ACL", lambda: (suite.auth(ldap), suite.acl(ldap, unrestricted=True)))
+        def ldap_filter_boundaries():
+            repeated = {**ldap, "ldap_uri": f"ldap://127.0.0.1:{ldap_port}/dc=example,dc=org?cn?sub?(&(uid=@)(cn=@))"}
+            with suite.broker(repeated) as (port, _):
+                suite.connect(port).close()
+                suite.connect(port, "*)(uid=alice", allowed=False).close()
+                suite.connect(port, "x" * 700, allowed=False).close()
+                for _ in range(25):
+                    suite.connect(port, "alice", "wrong", allowed=False).close()
+                suite.connect(port).close()
+        suite.check("LDAP: filter escaping, repeated placeholders, long usernames and failed-bind cleanup", ldap_filter_boundaries)
         def ldap_deny():
             with suite.broker({**ldap, "ldap_acl_deny": "true", "superusers": "observer"}) as (port, _):
                 suite.delivery(port, allowed=False)
@@ -463,18 +492,28 @@ access to * by * read
                         suite.connect(port, allowed=False).close()
         suite.check("HTTP/JWT: malformed and oversized environment parameters fail closed", invalid_environment)
 
+        def long_host_header():
+            hostname = "host-" + "x" * 2048
+            with suite.broker({**http_options_config, "http_hostname": hostname}) as (port, _):
+                suite.connect(port).close()
+            assert any(host == hostname for path, _, _, host in http_events if path == "/http/user")
+        suite.check("HTTP: long Host header is allocated without a fixed-size buffer", long_host_header)
+
         def acl_cache():
             nonlocal http_acl_allowed
-            with suite.broker({**http_options_config, "acl_cacheseconds": 1, "acl_cachejitter": 0}) as (port, _):
-                suite.delivery(port)
-                http_acl_allowed = False
-                suite.delivery(port)
-                time.sleep(2.1)
-                suite.delivery(port, allowed=False)
+            try:
+                with suite.broker({**http_options_config, "acl_cacheseconds": 1, "acl_cachejitter": 0}) as (port, _):
+                    suite.delivery(port)
+                    http_acl_allowed = False
+                    suite.delivery(port)
+                    time.sleep(2.1)
+                    suite.delivery(port, allowed=False)
+                    http_acl_allowed = True
+                    suite.delivery(port, allowed=False)
+                    time.sleep(2.1)
+                    suite.delivery(port)
+            finally:
                 http_acl_allowed = True
-                suite.delivery(port, allowed=False)
-                time.sleep(2.1)
-                suite.delivery(port)
         suite.check("ACL cache: grant/denial reuse, revocation and TTL expiry", acl_cache)
 
         def acl_cache_isolation():
