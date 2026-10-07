@@ -50,7 +50,6 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 	char *env_value[MAXPARAMSNUM];
 	int i, num = 0;
 
-	//_log(LOG_DEBUG, "sys_envs=%s", sys_envs);
 
 	env_string = (char *)malloc( strlen(required_env) + 20);
 	if (env_string == NULL) {
@@ -59,17 +58,12 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 	}
 	sprintf(env_string, "%s", required_env);
 
-	//_log(LOG_DEBUG, "env_string=%s", env_string);
 
 	num = get_sys_envs(env_string, ",", "=", params_key, env_names, env_value);
-	//sprintf(querystring, "");
 	for( i = 0; i < num; i++ ){
 		escaped_key = curl_easy_escape(curl, params_key[i], 0);
 		escaped_val = curl_easy_escape(curl, env_value[i], 0);
 
-		//_log(LOG_DEBUG, "key=%s", params_key[i]);
-		//_log(LOG_DEBUG, "escaped_key=%s", escaped_key);
-		//_log(LOG_DEBUG, "escaped_val=%s", escaped_envvalue);
 
 		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 4);
 		if ( data == NULL ) {
@@ -87,8 +81,6 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 		curl_free(escaped_val);
 	}
 
-	if (escaped_key) free(escaped_key);
-	if (escaped_val) free(escaped_val);
 	free(env_string);
 	return (num);
 }
@@ -99,7 +91,7 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	CURL *curl;
 	struct curl_slist *headerlist=NULL;
 	int re, urllen = 0;
-	int respCode = 0;
+	long respCode = 0;
 	int ok = BACKEND_DEFER;
 	char *url;
 	char *data;
@@ -124,7 +116,6 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		headerlist = curl_slist_append(headerlist, conf->basic_auth);
 	}
 
-	//_log(LOG_NOTICE, "u=%s p=%s t=%s acc=%d", username, password, topic, acc);
 
 	urllen = strlen(conf->hostname) + strlen(uri) + 20;
 	url = (char *)malloc(urllen);
@@ -181,11 +172,9 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 		escaped_password,
 		escaped_topic,
 		string_acc,
-		clientid);
+		escaped_clientid);
 
 	_log(LOG_DEBUG, "url=%s", url);
-	_log(LOG_DEBUG, "data=%s", data);
-	// curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -194,17 +183,15 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
 	curl_easy_setopt(curl, CURLOPT_USERNAME, username);
 	curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
 	re = curl_easy_perform(curl);
 	if (re == CURLE_OK) {
 		re = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respCode);
-		if (re == CURLE_OK && respCode >= 200 && respCode < 300) {
+		if (re == CURLE_OK && respCode == 200) {
 			ok = BACKEND_ALLOW;
 		} else if (re == CURLE_OK && respCode >= 500) {
 			ok = BACKEND_ERROR;
-		} else {
-			//_log(LOG_NOTICE, "http auth fail re=%d respCode=%d", re, respCode);
 		}
 	} else {
 		_log(LOG_DEBUG, "http req fail url=%s re=%s", url, curl_easy_strerror(re));
@@ -216,10 +203,10 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	free(url);
 	free(data);
 	free(string_envs);
-	free(escaped_username);
-	free(escaped_password);
-	free(escaped_topic);
-	free(escaped_clientid);
+	curl_free(escaped_username);
+	curl_free(escaped_password);
+	curl_free(escaped_topic);
+	curl_free(escaped_clientid);
 	return (ok);
 }
 

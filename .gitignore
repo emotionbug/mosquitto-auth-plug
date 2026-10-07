@@ -8,3 +8,6 @@ Makefile
 *.a
 config.mk
 sundry
+
+/build/
+__pycache__/

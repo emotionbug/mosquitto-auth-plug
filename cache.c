@@ -31,7 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <mosquitto.h>
+#include <mosquitto/libmosquitto.h>
 #include "userdata.h"
 #include "cache.h"
 #include <openssl/evp.h>

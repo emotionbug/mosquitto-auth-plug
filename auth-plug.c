@@ -31,9 +31,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <openssl/evp.h>
-#include <mosquitto.h>
-#include <mosquitto_broker.h>
-#include <mosquitto_plugin.h>
+#include <mosquitto/libmosquitto.h>
+#include <mosquitto/broker.h>
+#include <mosquitto/broker_plugin.h>
 #include <fnmatch.h>
 #include <time.h>
 
@@ -141,7 +141,6 @@ int mosquitto_auth_plugin_init(void **userdata, struct mosquitto_auth_opt *auth_
 	ud->auth_cachejitter = 0;
 	ud->aclcache = NULL;
 	ud->authcache = NULL;
-	ud->clients = NULL;
 
 	/*
 	 * Shove all options Mosquitto gives the plugin into a hash,
@@ -150,7 +149,6 @@ int mosquitto_auth_plugin_init(void **userdata, struct mosquitto_auth_opt *auth_
 	 */
 
 	for (i = 0, o = auth_opts; i < auth_opt_count; i++, o++) {
-		// _log(LOG_DEBUG, "AuthOptions: key=%s, val=%s", o->key, o->value);
 
 		p_add(o->key, o->value);
 
@@ -177,10 +175,6 @@ int mosquitto_auth_plugin_init(void **userdata, struct mosquitto_auth_opt *auth_
 				_log(LOG_NOTICE, "Error: Invalid log_quiet value (%s).", o->value);
 			}
 		}
-#if 0
-		if (!strcmp(o->key, "topic_prefix"))
-			ud->topicprefix = strdup(o->value);
-#endif
 	}
 
 	/*
@@ -499,7 +493,7 @@ int mosquitto_auth_security_cleanup(void *userdata, struct mosquitto_auth_opt *a
 
 
 #if MOSQ_AUTH_PLUGIN_VERSION >=3
-int mosquitto_auth_unpwd_check(void *userdata, const struct mosquitto *client, const char *username, const char *password)
+int mosquitto_auth_unpwd_check(void *userdata, struct mosquitto *client, const char *username, const char *password)
 #else
 int mosquitto_auth_unpwd_check(void *userdata, const char *username, const char *password)
 #endif
@@ -514,22 +508,7 @@ int mosquitto_auth_unpwd_check(void *userdata, const char *username, const char 
 
 	_log(LOG_DEBUG, "mosquitto_auth_unpwd_check(%s)", (username) ? username : "<nil>");
 
-#if MOSQ_AUTH_PLUGIN_VERSION >=3
-	struct cliententry *e;
-	HASH_FIND(hh, ud->clients, &client, sizeof(void *), e);
-	if (e) {
-		free(e->username);
-		free(e->clientid);
-		e->username = strdup(username);
-		e->clientid = strdup("client id not available");
-	} else {
-		e = (struct cliententry *)malloc(sizeof(struct cliententry));
-		e->key = (void *)client;
-		e->username = strdup(username);
-		e->clientid = strdup("client id not available");
-		HASH_ADD(hh, ud->clients, key, sizeof(void *), e);
-	}
-#endif
+
 
 	granted = auth_cache_q(username, password, userdata);
 	if (granted != MOSQ_ERR_UNKNOWN) {
@@ -598,7 +577,7 @@ int mosquitto_auth_unpwd_check(void *userdata, const char *username, const char 
 }
 
 #if MOSQ_AUTH_PLUGIN_VERSION >= 3
-int mosquitto_auth_acl_check(void *userdata, int access, const struct mosquitto *client, const struct mosquitto_acl_msg *msg)
+int mosquitto_auth_acl_check(void *userdata, int access, struct mosquitto *client, const struct mosquitto_acl_msg *msg)
 #else
 int mosquitto_auth_acl_check(void *userdata, const char *clientid, const char *username, const char *topic, int access)
 #endif
@@ -609,26 +588,10 @@ int mosquitto_auth_acl_check(void *userdata, const char *clientid, const char *u
 	int match = 0, authorized = FALSE, has_error = FALSE;
 	int granted = MOSQ_DENY_ACL;
 #if MOSQ_AUTH_PLUGIN_VERSION >= 3
-	struct cliententry *e;
-	const char *clientid = NULL;
-	const char *username = NULL;
+	/* Use broker-owned identity values to avoid stale or accumulated per-client copies. */
+	const char *clientid = mosquitto_client_id(client);
+	const char *username = mosquitto_client_username(client);
 	const char *topic = msg->topic;
-	HASH_FIND(hh, ud->clients, &client, sizeof(void *), e);
-	if (e) {
-		clientid = e->clientid;
-		username = e->username;
-	} else {
-		bool client_cert = (mosquitto_client_certificate(client) != NULL);
-
-		if (client_cert == true) {
-			clientid = mosquitto_client_id(client);
-			username = mosquitto_client_username(client);
-		}
-
-		if (client_cert == false || clientid == NULL || username == NULL) {
-			return MOSQ_ERR_PLUGIN_DEFER;
-		}
-	}
 #endif
 
 	if (!username || !*username) { 	// anonymous users
@@ -749,7 +712,7 @@ int mosquitto_auth_acl_check(void *userdata, const char *clientid, const char *u
 
 
 #if MOSQ_AUTH_PLUGIN_VERSION >= 3
-int mosquitto_auth_psk_key_get(void *userdata, const struct mosquitto *client, const char *hint, const char *identity, char *key, int max_key_len)
+int mosquitto_auth_psk_key_get(void *userdata, struct mosquitto *client, const char *hint, const char *identity, char *key, int max_key_len)
 #else
 int mosquitto_auth_psk_key_get(void *userdata, const char *hint, const char *identity, char *key, int max_key_len)
 #endif

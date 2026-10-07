@@ -1,0 +1,72 @@
+name: HTTP plugin compatibility
+
+on:
+  push:
+    branches: [openssl3-http, master]
+  pull_request:
+    branches: [openssl3-http, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: http-plugin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-http:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake perl python3 libcjson-dev curl ca-certificates
+      - name: Check script syntax
+        run: |
+          bash -n build-http.sh
+          bash -n .ci/build-dependencies.sh
+          python3 -m py_compile tests/test_http_plugin.py
+      - name: Build pinned TLS and broker dependencies
+        run: bash .ci/build-dependencies.sh "$GITHUB_WORKSPACE/build/deps"
+      - name: Build and test HTTP plugin with GCC and Clang
+        run: |
+          for compiler in gcc clang; do
+            output="$GITHUB_WORKSPACE/build/$compiler"
+            mkdir -p "$output"
+            CC="$compiler" bash build-http.sh \
+              "$GITHUB_WORKSPACE/build/deps/mosquitto" \
+              "$GITHUB_WORKSPACE/build/deps/openssl" \
+              "$GITHUB_WORKSPACE/build/deps/curl" "$output" 2>&1 | tee "$output/build.log"
+            python3 tests/test_http_plugin.py \
+              --broker "$GITHUB_WORKSPACE/build/deps/mosquitto/sbin/mosquitto" \
+              --plugin "$output/auth-plug.so" \
+              --openssl-prefix "$GITHUB_WORKSPACE/build/deps/openssl" \
+              --curl-prefix "$GITHUB_WORKSPACE/build/deps/curl" \
+              --artifacts-dir "$output/tests" 2>&1 | tee "$output/tests.log"
+          done
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: http-plugin-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/deps/build.log
+            build/gcc/*.txt
+            build/gcc/*.sha256
+            build/gcc/*.log
+            build/gcc/tests/
+            build/clang/*.txt
+            build/clang/*.sha256
+            build/clang/*.log
+            build/clang/tests/

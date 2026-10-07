@@ -32,8 +32,8 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
-#include <mosquitto.h>
-#include <mosquitto_plugin.h>
+#include <mosquitto/libmosquitto.h>
+#include <mosquitto/broker_plugin.h>
 #include "log.h"
 
 int log_quiet=0;
